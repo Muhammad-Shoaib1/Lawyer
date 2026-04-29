@@ -1,0 +1,121 @@
+function makeMockSessionId() {
+  return `mock-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+}
+
+function safeString(v) {
+  return typeof v === "string" ? v : undefined;
+}
+
+function pickFirst(obj, keys) {
+  if (!obj || typeof obj !== "object") return undefined;
+  for (const k of keys) {
+    if (obj[k]) return obj[k];
+  }
+  return undefined;
+}
+
+async function jsonRequest(url, { method = "POST", headers = {}, body } = {}) {
+  const res = await fetch(url, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
+
+  if (!res.ok) {
+    const err = new Error(
+      `LiveAvatar request failed (${res.status}): ${JSON.stringify(
+        data?.error || data?.message || data?.raw || {}
+      )}`
+    );
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+
+  return data;
+}
+
+function buildHeaders(apiKey) {
+  // LiveAvatar API docs use X-API-KEY for session token creation.
+  return {
+    "Content-Type": "application/json",
+    "X-API-KEY": apiKey,
+  };
+}
+
+async function createLiveAvatarSessionToken({
+  apiKey,
+  baseUrl,
+  avatarId,
+}) {
+  if (!apiKey || !avatarId) {
+    return {
+      isMock: true,
+      sessionId: makeMockSessionId(),
+      sessionToken: null,
+      reason: "Missing LiveAvatar environment variables.",
+    };
+  }
+
+  // Docs specify api.liveavatar.com; allow user's baseUrl as primary.
+  const candidates = [
+    baseUrl,
+    "https://api.liveavatar.com",
+    "https://api.liveavatar.ai",
+  ].filter(Boolean);
+
+  const errors = [];
+
+  for (const candidateBaseUrl of candidates) {
+    try {
+      const url = new URL("/v1/sessions/token", candidateBaseUrl).toString();
+
+      // Full mode token: avatar_persona is required by schema (object even if minimal).
+      const body = {
+        mode: "FULL",
+        avatar_id: avatarId,
+        avatar_persona: {
+          language: "en",
+        },
+      };
+
+      const data = await jsonRequest(url, {
+        headers: buildHeaders(apiKey),
+        body,
+      });
+
+      const payload = data?.data || data;
+
+      const sessionId = pickFirst(payload, ["session_id", "sessionId", "id"]);
+      const sessionToken = pickFirst(payload, [
+        "session_token",
+        "sessionToken",
+      ]);
+
+      if (!sessionId || !sessionToken) {
+        throw new Error("Missing session_id/session_token in LiveAvatar response.");
+      }
+
+      return { isMock: false, sessionId, sessionToken };
+    } catch (e) {
+      errors.push(e?.message || String(e));
+    }
+  }
+
+  return {
+    isMock: true,
+    sessionId: makeMockSessionId(),
+    sessionToken: null,
+    reason: `Unable to create LiveAvatar session token: ${errors.join(" | ")}`,
+  };
+}
+
+module.exports = { createLiveAvatarSessionToken };
+

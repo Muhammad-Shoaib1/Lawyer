@@ -1,0 +1,217 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+
+const practiceAreas = [
+  "Family Law",
+  "Criminal Law",
+  "Civil Law",
+  "Immigration",
+  "Business Law",
+];
+
+function formatTime(d) {
+  try {
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+
+export default function ChatBox({
+  practiceArea,
+  onPracticeAreaChange,
+  messages,
+  onSubmitMessage,
+  isThinking,
+  onVoiceStatusChange,
+  chatError,
+}) {
+  const [draft, setDraft] = useState("");
+  const [isSpeechSupported, setIsSpeechSupported] = useState(true);
+  const recognitionRef = useRef(null);
+  const lastInterimRef = useRef("");
+
+  const SpeechRecognition =
+    typeof window !== "undefined"
+      ? window.SpeechRecognition || window.webkitSpeechRecognition
+      : null;
+
+  useEffect(() => {
+    setIsSpeechSupported(!!SpeechRecognition);
+  }, [SpeechRecognition]);
+
+  const startRecognition = () => {
+    if (!SpeechRecognition) return;
+    if (isThinking) return;
+
+    const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
+    recognition.lang = "en-US";
+    recognition.interimResults = true;
+    recognition.continuous = false;
+
+    recognition.onstart = () => {
+      onVoiceStatusChange?.("listening");
+    };
+
+    recognition.onerror = (event) => {
+      console.warn("[speech] error:", event);
+      onVoiceStatusChange?.("ready");
+    };
+
+    recognition.onend = () => {
+      onVoiceStatusChange?.("ready");
+    };
+
+    recognition.onresult = (event) => {
+      let interim = "";
+      let finalText = "";
+
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        const transcript = result[0]?.transcript || "";
+        if (result.isFinal) finalText += transcript;
+        else interim += transcript;
+      }
+
+      const cleanedInterim = interim.trim();
+      if (cleanedInterim && cleanedInterim !== lastInterimRef.current) {
+        lastInterimRef.current = cleanedInterim;
+      }
+
+      if (finalText.trim()) {
+        const cleaned = finalText.trim().replace(/\s+/g, " ");
+        setDraft(cleaned);
+        onVoiceStatusChange?.("ready");
+        onSubmitMessage?.(cleaned);
+      } else if (interim.trim()) {
+        setDraft((prev) => {
+          // Avoid fighting the user while they type.
+          if (prev && prev !== lastInterimRef.current) return prev;
+          return interim.trim();
+        });
+      }
+    };
+
+    try {
+      recognition.start();
+    } catch (e) {
+      // start() can throw if called twice quickly
+      console.warn("[speech] start failed:", e);
+      onVoiceStatusChange?.("ready");
+    }
+  };
+
+  const canSend = useMemo(() => {
+    return !isThinking && draft.trim().length > 0;
+  }, [draft, isThinking]);
+
+  const submit = () => {
+    const t = draft.trim();
+    if (!t) return;
+    setDraft("");
+    onSubmitMessage?.(t);
+  };
+
+  return (
+    <div>
+      <div className="sectionTitle">
+        <div className="hint">Practice Area</div>
+      </div>
+
+      <div className="smallRow" style={{ marginTop: 0 }}>
+        <select
+          className="select"
+          value={practiceArea}
+          disabled={isThinking}
+          onChange={(e) => onPracticeAreaChange?.(e.target.value)}
+          aria-label="Practice Area"
+        >
+          {practiceAreas.map((a) => (
+            <option key={a} value={a}>
+              {a}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="formRow">
+        <textarea
+          className="input"
+          rows={3}
+          value={draft}
+          disabled={isThinking}
+          placeholder="Ask your legal question (general guidance only)..."
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+              e.preventDefault();
+              if (canSend) submit();
+            }
+          }}
+        />
+        <button
+          className="btn btnGold"
+          type="button"
+          disabled={!canSend}
+          onClick={submit}
+          aria-label="Send question"
+        >
+          Send
+        </button>
+      </div>
+
+      <div className="smallRow">
+        <button
+          className="btn"
+          type="button"
+          disabled={!isSpeechSupported || isThinking}
+          onClick={startRecognition}
+        >
+          Voice Input
+        </button>
+        <div className="statusText">
+          {isSpeechSupported ? "Tip: press Ctrl/⌘ + Enter to send" : "Voice input not supported in this browser."}
+        </div>
+      </div>
+
+      <div className="transcript glass" aria-label="Chat transcript">
+        {messages.length === 0 ? (
+          <div className="hint">
+            Ask a question using text or voice. Claude generates the reply, and the avatar speaks it with the same text.
+          </div>
+        ) : null}
+
+        {messages.map((m, idx) => (
+          <div
+            key={`${m.role}-${idx}`}
+            className={`bubble ${m.role === "user" ? "bubbleUser" : "bubbleAI"}`}
+          >
+            <div className="metaLine">
+              {m.role === "user" ? "You" : "Assistant"} • {formatTime(m.at)}
+            </div>
+            {m.text}
+          </div>
+        ))}
+      </div>
+
+      {chatError ? (
+        <div className="retryRow">
+          <div className="statusText" style={{ color: "rgba(255,255,255,0.85)" }}>
+            {chatError.message}
+          </div>
+          {chatError.canRetry ? (
+            <button
+              className="btn btnGold"
+              type="button"
+              onClick={chatError.onRetry}
+              disabled={isThinking}
+            >
+              Retry
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
