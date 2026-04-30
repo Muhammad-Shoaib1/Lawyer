@@ -6,6 +6,11 @@ const practiceAreas = [
   "Civil Law",
   "Immigration",
   "Business Law",
+  "Employment Law",
+  "Personal Injury",
+  "Real Estate Law",
+  "Intellectual Property",
+  "Tax Law",
 ];
 
 function formatTime(d) {

@@ -8,12 +8,124 @@ import {
   AgentEventsEnum,
 } from "@heygen/liveavatar-web-sdk";
 
+const SUGGESTED_QUESTION_BANK = {
+  "Family Law": [
+    "How does child custody usually get decided?",
+    "What are the first steps to file for divorce?",
+    "Can alimony be modified after divorce?",
+    "How can I document issues for a custody case?",
+    "What does legal separation mean in practice?",
+    "How is child support usually calculated?",
+  ],
+  "Criminal Law": [
+    "What should I do immediately after an arrest?",
+    "How does bail work in most jurisdictions?",
+    "What is the difference between a misdemeanor and felony?",
+    "When should I avoid speaking to police?",
+    "What happens at an arraignment hearing?",
+    "Can charges be dropped before trial?",
+  ],
+  "Civil Law": [
+    "What documents help in a civil dispute?",
+    "How do I know if I should file a lawsuit?",
+    "What is the usual timeline for a civil case?",
+    "How are damages calculated in civil matters?",
+    "What is the difference between settlement and trial?",
+    "Can I represent myself in civil court?",
+  ],
+  Immigration: [
+    "What can I do after a visa overstay notice?",
+    "How do I prepare for an immigration interview?",
+    "What evidence helps in an asylum case?",
+    "When should I file for adjustment of status?",
+    "What happens if I miss an immigration hearing?",
+    "How do I track my immigration case status?",
+  ],
+  "Business Law": [
+    "Should I form an LLC or a corporation?",
+    "What clauses are critical in a service contract?",
+    "How can I handle a contract breach?",
+    "What legal basics should a startup cover first?",
+    "How do I protect my business from liability?",
+    "When should a business involve legal counsel?",
+  ],
+  "Employment Law": [
+    "What should I do before reporting workplace harassment?",
+    "How do wrongful termination claims usually work?",
+    "What records should I keep for wage disputes?",
+    "Can an employer change my contract terms suddenly?",
+    "What are common signs of retaliation at work?",
+    "How do I document unpaid overtime issues?",
+  ],
+  "Personal Injury": [
+    "What evidence is most important after an accident?",
+    "How long do I have to file an injury claim?",
+    "Should I speak to the insurance adjuster directly?",
+    "How is pain and suffering usually assessed?",
+    "What medical records should I gather first?",
+    "When should I consider settlement versus court?",
+  ],
+  "Real Estate Law": [
+    "What should I review before signing a lease?",
+    "How do property boundary disputes get handled?",
+    "What are common legal risks in home purchases?",
+    "Can I break a lease early without penalties?",
+    "What should I do if a seller hides defects?",
+    "How can I handle landlord maintenance violations?",
+  ],
+  "Intellectual Property": [
+    "Should I trademark my brand name first?",
+    "What is the difference between copyright and trademark?",
+    "How do I respond to a cease-and-desist letter?",
+    "When should I file a patent application?",
+    "How do I protect app code from copying?",
+    "What steps help enforce IP rights online?",
+  ],
+  "Tax Law": [
+    "What should I do after getting an IRS notice?",
+    "How can I dispute a tax assessment?",
+    "What records should I keep for an audit?",
+    "When is a payment plan usually possible?",
+    "How do penalties and interest typically accrue?",
+    "What are common options for tax debt relief?",
+  ],
+};
+
+function pickRandomQuestions(area, refreshNonce, count = 4) {
+  const pool = SUGGESTED_QUESTION_BANK[area] || SUGGESTED_QUESTION_BANK["Family Law"];
+  const decorated = pool.map((q, idx) => ({
+    q,
+    // refreshNonce ensures a different shuffle across page refreshes.
+    sortKey: Math.sin((refreshNonce + 1) * (idx + 1) * 99991),
+  }));
+  decorated.sort((a, b) => a.sortKey - b.sortKey);
+  return decorated.slice(0, count).map((entry) => entry.q);
+}
+
 function formatNow() {
   return new Date();
 }
 
 function getApiBaseUrl() {
   return import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+}
+
+function parseAvatarStartError(err) {
+  const raw = String(err?.message || err || "");
+  const lower = raw.toLowerCase();
+
+  if (lower.includes("insufficient credits")) {
+    return "LiveAvatar credits are insufficient for starting a live session. Please top up credits in your LiveAvatar account.";
+  }
+  if (lower.includes("forbidden") || lower.includes("403")) {
+    return "LiveAvatar rejected session start (403). Check API key permissions, avatar access, and account limits.";
+  }
+  return "Live avatar session could not start right now. Using speech fallback.";
+}
+
+function isBenignAvatarCleanupError(reason) {
+  const text = String(reason?.message || reason || "").toLowerCase();
+  return text.includes("session not found") || text.includes("/v1/sessions/stop");
 }
 
 async function postJson(url, body, { timeoutMs = 20000 } = {}) {
@@ -48,17 +160,8 @@ async function postJson(url, body, { timeoutMs = 20000 } = {}) {
 }
 
 export default function MainSection() {
-  const suggested = useMemo(
-    () => [
-      "What should I do after a car accident?",
-      "How does divorce filing begin?",
-      "Can I get bail quickly?",
-      "What documents should I bring?",
-    ],
-    []
-  );
-
   const [practiceArea, setPracticeArea] = useState("Family Law");
+  const [refreshNonce] = useState(() => Date.now() + Math.floor(Math.random() * 100000));
   const [status, setStatus] = useState("ready"); // ready | listening | thinking | speaking
 
   const [sessionId, setSessionId] = useState(null);
@@ -75,8 +178,13 @@ export default function MainSection() {
   const [messages, setMessages] = useState([]);
   const [isThinking, setIsThinking] = useState(false);
   const [chatError, setChatError] = useState(null);
+  const [claudeMode, setClaudeMode] = useState("unknown"); // unknown | live | fallback
 
   const apiBaseUrl = getApiBaseUrl();
+  const suggested = useMemo(
+    () => pickRandomQuestions(practiceArea, refreshNonce, 4),
+    [practiceArea, refreshNonce]
+  );
 
   const speakFallback = useCallback(
     (text) => {
@@ -102,6 +210,16 @@ export default function MainSection() {
     [muted]
   );
 
+  const inferClaudeMode = useCallback((reply) => {
+    const text = String(reply || "").toLowerCase();
+    if (!text) return "unknown";
+    // Matches our backend fallback templates/messages.
+    const isFallback =
+      text.includes("this is general information and laws vary by jurisdiction") ||
+      text.includes("claude is currently unavailable");
+    return isFallback ? "fallback" : "live";
+  }, []);
+
   const handleAsk = useCallback(
     async (messageText) => {
       const question = messageText.trim();
@@ -126,6 +244,7 @@ export default function MainSection() {
 
         const reply = chatData?.reply;
         if (!reply) throw new Error("Empty Claude reply");
+        setClaudeMode(inferClaudeMode(reply));
 
         setMessages((prev) => [
           ...prev,
@@ -169,7 +288,7 @@ export default function MainSection() {
         });
       }
     },
-    [apiBaseUrl, practiceArea, sessionId, speakFallback]
+    [apiBaseUrl, practiceArea, sessionId, speakFallback, inferClaudeMode]
   );
 
   const onVoiceStatusChange = (nextStatus) => {
@@ -242,9 +361,10 @@ export default function MainSection() {
       await liveSession.start();
       liveSessionRef.current = liveSession;
     } catch (err) {
-      console.error("[avatar] start session failed:", err);
-      setAvatarError(err?.message || "Avatar unavailable.");
+      console.warn("[avatar] start session failed:", err?.message || err);
+      setAvatarError(parseAvatarStartError(err));
       setSessionId(null);
+      setLiveEnabled(false);
       liveSessionRef.current = null;
       setStatus("ready");
     } finally {
@@ -266,12 +386,54 @@ export default function MainSection() {
     setStatus("ready");
   }, []);
 
+  // Suppress known harmless SDK cleanup rejections when session start fails.
+  React.useEffect(() => {
+    const onUnhandledRejection = (event) => {
+      if (isBenignAvatarCleanupError(event?.reason)) {
+        event.preventDefault();
+      }
+    };
+    window.addEventListener("unhandledrejection", onUnhandledRejection);
+    return () => window.removeEventListener("unhandledrejection", onUnhandledRejection);
+  }, []);
+
   return (
     <div className="heroWrap">
       <div className="heroCard">
         <div className="heroInner">
           <div className="left">
             <div className="eyebrow">LawyerAI MERN Demo</div>
+            <div
+              className="statusBadge"
+              style={{
+                display: "inline-flex",
+                marginBottom: 12,
+                borderColor:
+                  claudeMode === "live"
+                    ? "rgba(52,211,153,0.35)"
+                    : claudeMode === "fallback"
+                      ? "rgba(251,191,36,0.35)"
+                      : "rgba(255,255,255,0.16)",
+              }}
+              aria-live="polite"
+            >
+              <span
+                className="dot"
+                style={{
+                  background:
+                    claudeMode === "live"
+                      ? "#34d399"
+                      : claudeMode === "fallback"
+                        ? "#f59e0b"
+                        : "rgba(255,255,255,0.5)",
+                }}
+              />
+              {claudeMode === "live"
+                ? "Claude Live Mode"
+                : claudeMode === "fallback"
+                  ? "Fallback Mode"
+                  : "Claude Status: Unknown"}
+            </div>
             <h1>Speak With Our AI Legal Assistant</h1>
             <p className="sub">
               Get instant general legal guidance powered by AI. For case-specific advice,

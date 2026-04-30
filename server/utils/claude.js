@@ -1,6 +1,13 @@
 const Anthropic = require("@anthropic-ai/sdk");
 
-const DEFAULT_MODEL = "claude-3-5-sonnet-latest";
+const DEFAULT_MODEL_CANDIDATES = [
+  process.env.ANTHROPIC_MODEL,
+  "claude-sonnet-4-6",
+  "claude-opus-4-7",
+  "claude-opus-4-6",
+  "claude-sonnet-4-5",
+].filter(Boolean);
+let cachedWorkingModel = null;
 
 function buildSystemPrompt() {
   return `You are an AI legal intake assistant for a professional law firm.
@@ -10,6 +17,8 @@ Provide only general information.
 Never claim to be a lawyer.
 
 Use professional, calm, concise tone.
+
+Keep answers brief by default (about 3-5 short sentences) unless the user explicitly asks for detail.
 
 Always mention: “This is general information and laws vary by jurisdiction.”
 
@@ -54,12 +63,38 @@ async function generateClaudeReply({ apiKey, message, practiceArea }) {
   ].join("\n");
 
   const systemPrompt = buildSystemPrompt();
-  const response = await anthropic.messages.create({
-    model: DEFAULT_MODEL,
-    max_tokens: 800,
-    system: systemPrompt,
-    messages: [{ role: "user", content: userText }],
-  });
+  let response = null;
+  let lastErr = null;
+
+  const modelsToTry = cachedWorkingModel
+    ? [cachedWorkingModel, ...DEFAULT_MODEL_CANDIDATES.filter((m) => m !== cachedWorkingModel)]
+    : DEFAULT_MODEL_CANDIDATES;
+
+  for (const model of modelsToTry) {
+    try {
+      response = await anthropic.messages.create({
+        model,
+        max_tokens: 500,
+        system: systemPrompt,
+        messages: [{ role: "user", content: userText }],
+      });
+      cachedWorkingModel = model;
+      break;
+    } catch (err) {
+      lastErr = err;
+      const type = String(err?.type || err?.error?.type || "").toLowerCase();
+      const msg = String(err?.message || "").toLowerCase();
+      const notFoundModel = type.includes("not_found") || msg.includes("model:");
+      if (!notFoundModel) {
+        // Non-model errors (billing/auth/network) should bubble immediately.
+        throw err;
+      }
+    }
+  }
+
+  if (!response) {
+    throw lastErr || new Error("No available Claude model could be used.");
+  }
 
   const reply =
     response?.content?.[0]?.text ||
