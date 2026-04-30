@@ -25,7 +25,7 @@ function getExt(filename = "") {
 
 function parseBody(req) {
   const raw = req.body || {};
-  const message = normalizeString(raw.message);
+  const message = normalizeString(raw.message || raw.text || raw.q);
   const practiceArea = normalizeString(raw.practiceArea) || "General";
   const country = normalizeString(raw.country) || "United States";
   const state = normalizeString(raw.state) || "General";
@@ -112,7 +112,13 @@ async function chatController(req, res) {
   const { message, practiceArea, country, state } = parseBody(req);
 
   if (typeof message !== "string" || !message.trim()) {
-    return res.status(400).json({ error: "message is required" });
+    return res.json({
+      reply: "Please provide a legal question or message so I can assist you.",
+      mode: "live",
+      fileContext: { acceptedFiles: [], skippedFiles: [] },
+      jurisdiction: { country, state },
+      modeReason: ""
+    });
   }
 
   const userMessage = message.trim();
