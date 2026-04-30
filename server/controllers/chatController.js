@@ -124,7 +124,10 @@ async function chatController(req, res) {
   const userMessage = message.trim();
   const area = practiceArea;
   const uploadedFiles = req.files || [];
+  
+  console.log("[chat] req.files length:", uploadedFiles.length);
   const caseData = buildCaseContext(uploadedFiles);
+  console.log("[chat] caseData:", caseData);
 
   const startTs = Date.now();
   let reply = "";
@@ -149,6 +152,7 @@ async function chatController(req, res) {
         country,
         state,
         caseContext: caseData.context,
+        skippedFiles: caseData.skippedFiles,
       });
       reply = result.reply;
       urgentTopic = result.urgentTopic;

@@ -67,6 +67,7 @@ async function generateClaudeReply({
   country,
   state,
   caseContext,
+  skippedFiles = [],
 }) {
   const anthropic = new Anthropic({ apiKey });
 
@@ -78,6 +79,9 @@ async function generateClaudeReply({
   ];
   if (caseContext) {
     sections.push(`Case files context (user-uploaded excerpts):\n${caseContext}`);
+  }
+  if (skippedFiles.length > 0) {
+    sections.push(`System Note: The user tried to upload the following files, but they could not be read because they are in an unsupported format: ${skippedFiles.join(", ")}. Please inform the user that you can only read text-based files (like .txt, .csv, .md) and ask them to copy-paste the text or upload a supported format.`);
   }
   const userText = sections.join("\n\n");
 
