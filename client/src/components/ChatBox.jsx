@@ -241,7 +241,7 @@ export default function ChatBox({
           aria-label="Upload case files"
         />
         <div className="statusText">
-          Upload up to 5 text files (.txt, .md, .csv, .json, .xml, .html, .log)
+          Upload up to 5 files (.txt, .pdf, .docx)
         </div>
       </div>
       {caseFiles.length > 0 ? (

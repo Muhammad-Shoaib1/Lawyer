@@ -1,17 +1,14 @@
 const ChatHistory = require("../models/ChatHistory");
 const AnalyticsEvent = require("../models/AnalyticsEvent");
 const { generateClaudeReply, detectUrgentTopic } = require("../utils/claude");
+const pdfParse = require("pdf-parse");
+const mammoth = require("mammoth");
+
 const MAX_CASE_CONTEXT_CHARS = 7000;
 const ALLOWED_TEXT_EXTENSIONS = new Set([
   ".txt",
-  ".md",
-  ".markdown",
-  ".csv",
-  ".json",
-  ".xml",
-  ".html",
-  ".htm",
-  ".log",
+  ".pdf",
+  ".docx",
 ]);
 
 function normalizeString(v) {
@@ -32,7 +29,7 @@ function parseBody(req) {
   return { message, practiceArea, country, state };
 }
 
-function buildCaseContext(files = []) {
+async function buildCaseContext(files = []) {
   if (!Array.isArray(files) || files.length === 0) {
     return { context: "", acceptedFiles: [], skippedFiles: [] };
   }
@@ -49,7 +46,24 @@ function buildCaseContext(files = []) {
       continue;
     }
 
-    const asText = String(file?.buffer?.toString("utf8") || "").trim();
+    let asText = "";
+    try {
+      if (ext === ".pdf") {
+        const data = await pdfParse(file.buffer);
+        asText = (data.text || "").trim();
+      } else if (ext === ".docx") {
+        const result = await mammoth.extractRawText({ buffer: file.buffer });
+        asText = (result.value || "").trim();
+      } else {
+        // Default to plain text
+        asText = String(file?.buffer?.toString("utf8") || "").trim();
+      }
+    } catch (err) {
+      console.warn(`[chat] failed parsing ${baseName}:`, err?.message);
+      skippedFiles.push(`${baseName} (parsing failed)`);
+      continue;
+    }
+
     if (!asText) {
       skippedFiles.push(`${baseName} (empty or unreadable)`);
       continue;
@@ -126,7 +140,7 @@ async function chatController(req, res) {
   const uploadedFiles = req.files || [];
   
   console.log("[chat] req.files length:", uploadedFiles.length);
-  const caseData = buildCaseContext(uploadedFiles);
+  const caseData = await buildCaseContext(uploadedFiles);
   console.log("[chat] caseData:", caseData);
 
   const startTs = Date.now();
