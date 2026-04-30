@@ -10,7 +10,11 @@ const { notFoundHandler } = require("./middleware/errorHandler");
 const app = express();
 
 app.use(helmet());
-app.use(cors());
+app.use(cors({
+  origin: ["https://project-zyhhm.vercel.app", "http://localhost:5173"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  credentials: true
+}));
 app.use(morgan("dev"));
 
 app.use(express.json({ limit: "1mb" }));

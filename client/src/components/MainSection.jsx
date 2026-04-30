@@ -107,7 +107,15 @@ function formatNow() {
 }
 
 function getApiBaseUrl() {
-  return import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+  const url = import.meta.env.VITE_API_BASE_URL;
+  if (url) return url;
+  
+  // If running on Vercel and no API URL is set, assume same origin /api
+  if (typeof window !== "undefined" && window.location.hostname.includes("vercel.app")) {
+    return ""; // Relative path
+  }
+  
+  return "http://localhost:5000";
 }
 
 function parseAvatarStartError(err) {
