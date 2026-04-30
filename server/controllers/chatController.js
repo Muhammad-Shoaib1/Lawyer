@@ -30,6 +30,23 @@ function buildFallbackReply({ practiceArea, message }) {
   );
 }
 
+function buildAnthropicFailureReply(err) {
+  const text = String(err?.message || err || "").toLowerCase();
+  if (text.includes("credit balance is too low") || text.includes("insufficient")) {
+    return (
+      "Claude is currently unavailable for this demo because the configured Anthropic API key has insufficient credits. " +
+      "Please add credits (or use a funded API key) and try again."
+    );
+  }
+  if (text.includes("api key") || text.includes("unauthorized") || text.includes("forbidden")) {
+    return (
+      "Claude is currently unavailable because the Anthropic API key appears invalid or unauthorized. " +
+      "Please update the API key and try again."
+    );
+  }
+  return null;
+}
+
 async function chatController(req, res) {
   const { message, practiceArea } = req.body || {};
 
@@ -90,8 +107,11 @@ async function chatController(req, res) {
     const latencyMs = Date.now() - startTs;
     console.error("[chat] failed:", err);
 
-    // Demo fallback: still return a safe general-information reply.
-    const fallback = buildFallbackReply({ practiceArea: area, message: userMessage });
+    const anthropicFailureReply = buildAnthropicFailureReply(err);
+    // Demo fallback: still return a safe general-information reply if it's not an auth/billing issue.
+    const fallback =
+      anthropicFailureReply ||
+      buildFallbackReply({ practiceArea: area, message: userMessage });
 
     try {
       await AnalyticsEvent.create({

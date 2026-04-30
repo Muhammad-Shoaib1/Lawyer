@@ -14,32 +14,56 @@ function pickFirst(obj, keys) {
   return undefined;
 }
 
-async function jsonRequest(url, { method = "POST", headers = {}, body } = {}) {
+function dedupeNonEmpty(values) {
+  return Array.from(new Set(values.map((v) => safeString(v)?.trim()).filter(Boolean)));
+}
+
+async function jsonRequest(
+  url,
+  { method = "POST", headers = {}, body, timeoutMs = 7000 } = {}
+) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const res = await fetch(url, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
+    signal: controller.signal,
   });
-  const text = await res.text();
-  let data;
   try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = { raw: text };
-  }
+    const text = await res.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { raw: text };
+    }
 
-  if (!res.ok) {
-    const err = new Error(
-      `LiveAvatar request failed (${res.status}): ${JSON.stringify(
-        data?.error || data?.message || data?.raw || {}
-      )}`
-    );
-    err.status = res.status;
-    err.data = data;
+    if (!res.ok) {
+      const err = new Error(
+        `LiveAvatar request failed (${res.status}): ${JSON.stringify(
+          data?.error || data?.message || data?.raw || {}
+        )}`
+      );
+      err.status = res.status;
+      err.data = data;
+      throw err;
+    }
+
+    return data;
+  } catch (err) {
+    const aborted = err?.name === "AbortError";
+    if (aborted) {
+      const timeoutErr = new Error(
+        `LiveAvatar request timed out after ${timeoutMs}ms.`
+      );
+      timeoutErr.code = "LIVEAVATAR_TIMEOUT";
+      throw timeoutErr;
+    }
     throw err;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return data;
 }
 
 function buildHeaders(apiKey) {
@@ -64,12 +88,18 @@ async function createLiveAvatarSessionToken({
     };
   }
 
-  // Docs specify api.liveavatar.com; allow user's baseUrl as primary.
-  const candidates = [
-    baseUrl,
-    "https://api.liveavatar.com",
-    "https://api.liveavatar.ai",
-  ].filter(Boolean);
+  const requestTimeoutMs = Math.max(
+    1500,
+    Number(process.env.LIVEAVATAR_TOKEN_TIMEOUT_MS || 7000)
+  );
+  const fallbackUrlsEnabled = String(
+    process.env.LIVEAVATAR_ENABLE_FALLBACK_URLS || "false"
+  ).toLowerCase() === "true";
+
+  // Fast path: configured URL first. Optional fallback URLs can be enabled explicitly.
+  const candidates = fallbackUrlsEnabled
+    ? dedupeNonEmpty([baseUrl, "https://api.liveavatar.com", "https://api.liveavatar.ai"])
+    : dedupeNonEmpty([baseUrl || "https://api.liveavatar.com"]);
 
   const errors = [];
 
@@ -89,6 +119,7 @@ async function createLiveAvatarSessionToken({
       const data = await jsonRequest(url, {
         headers: buildHeaders(apiKey),
         body,
+        timeoutMs: requestTimeoutMs,
       });
 
       const payload = data?.data || data;

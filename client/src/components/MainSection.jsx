@@ -315,15 +315,15 @@ export default function MainSection() {
       // data.sessionToken is used by LiveAvatar Web SDK.
       const nextSessionId = data?.sessionId || null;
       const sessionToken = data?.sessionToken || null;
-
-      setSessionId(nextSessionId);
-      setLiveEnabled(!!sessionToken && !!nextSessionId);
+      const hasLiveSession = !!sessionToken && !!nextSessionId;
+      setSessionId(hasLiveSession ? nextSessionId : null);
+      setLiveEnabled(hasLiveSession);
       setStatus("ready");
 
       if (!sessionToken || !nextSessionId) {
-        // No LiveAvatar session token: keep the UI usable with browser fallback.
+        // No LiveAvatar session token: keep UI usable and show a clear backend reason.
         liveSessionRef.current = null;
-        if (data?.warning) setAvatarError(data.warning);
+        setAvatarError(data?.warning || "LiveAvatar unavailable; using speech fallback.");
         setLiveEnabled(false);
         return;
       }

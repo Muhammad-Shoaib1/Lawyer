@@ -22,16 +22,19 @@ async function createSession(req, res) {
       baseUrl: process.env.LIVEAVATAR_BASE_URL,
       avatarId: process.env.LIVEAVATAR_AVATAR_ID,
     });
+    const isMock = !!result?.isMock;
+    const warning = isMock
+      ? result?.reason || "LiveAvatar unavailable; using speech fallback."
+      : null;
 
     // MongoDB is optional for the demo; only log when connected.
-    let session = null;
     if (mongoose.connection.readyState === 1) {
       try {
-        session = await AvatarSession.create({
+        await AvatarSession.create({
           sessionId: result.sessionId,
           sessionToken: result.sessionToken,
           practiceArea: area,
-          status: result.isMock ? "mock_ready" : "ready",
+          status: isMock ? "mock_ready" : "ready",
           lastActivityAt: new Date(),
           meta: { userAgent: getUserAgent(req) },
         });
@@ -44,7 +47,8 @@ async function createSession(req, res) {
           practiceArea: area,
           route: "/api/avatar/session",
           eventType: "avatar_session_create",
-          success: true,
+          success: !isMock,
+          error: isMock ? warning : null,
           sessionId: result.sessionId,
           meta: { latencyMs: Date.now() - startTs },
         });
@@ -56,7 +60,8 @@ async function createSession(req, res) {
     return res.json({
       sessionId: result.sessionId,
       sessionToken: result.sessionToken,
-      isMock: result.isMock,
+      isMock,
+      warning,
     });
   } catch (err) {
     console.error("[avatar] createSession failed:", err?.message || err);
