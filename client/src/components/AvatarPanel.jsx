@@ -11,6 +11,7 @@ export default function AvatarPanel({
   onStartSession,
   onToggleMute,
   onEndSession,
+  onStopSpeaking,
   isAvatarLoading,
   avatarError,
 }) {
@@ -105,6 +106,16 @@ export default function AvatarPanel({
           >
             End Session
           </button>
+          {status === "speaking" && (
+            <button
+              className="btn btnGold"
+              type="button"
+              onClick={onStopSpeaking}
+              style={{ backgroundColor: "rgba(239, 68, 68, 0.8)", borderColor: "#ef4444" }}
+            >
+              Stop Speaking
+            </button>
+          )}
         </div>
       </div>
     </div>

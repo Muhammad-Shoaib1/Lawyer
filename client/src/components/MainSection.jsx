@@ -561,6 +561,7 @@ export default function MainSection() {
               onStartSession={startSession}
               onToggleMute={() => setMuted((m) => !m)}
               onEndSession={endSession}
+              onStopSpeaking={stopSpeakingNow}
             />
             <div className="hint" style={{ marginTop: 14, lineHeight: 1.65 }}>
               Claude generates the reply. LiveAvatar (or a browser fallback) speaks the exact same text with speaking controls.

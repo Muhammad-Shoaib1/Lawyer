@@ -228,6 +228,16 @@ export default function ChatBox({
         >
           Send
         </button>
+        {status === "speaking" && (
+          <button
+            className="btn"
+            type="button"
+            onClick={() => onBargeInDetected?.()}
+            style={{ backgroundColor: "rgba(239, 68, 68, 0.8)", borderColor: "#ef4444", color: "white" }}
+          >
+            Stop
+          </button>
+        )}
       </div>
       <div className="smallRow" style={{ marginTop: 8 }}>
         <input
