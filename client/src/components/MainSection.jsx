@@ -178,7 +178,7 @@ export default function MainSection() {
   const [messages, setMessages] = useState([]);
   const [isThinking, setIsThinking] = useState(false);
   const [chatError, setChatError] = useState(null);
-  const [claudeMode, setClaudeMode] = useState("unknown"); // unknown | live | fallback
+  const [claudeMode, setClaudeMode] = useState("fallback"); // unknown | live | fallback
 
   const apiBaseUrl = getApiBaseUrl();
   const suggested = useMemo(
@@ -222,7 +222,14 @@ export default function MainSection() {
 
   const handleAsk = useCallback(
     async (messageText) => {
-      const question = messageText.trim();
+      const normalized =
+        typeof messageText === "string"
+          ? { text: messageText, files: [] }
+          : {
+              text: String(messageText?.text || ""),
+              files: Array.isArray(messageText?.files) ? messageText.files : [],
+            };
+      const question = normalized.text.trim();
       if (!question) return;
 
       setChatError(null);
@@ -234,17 +241,36 @@ export default function MainSection() {
       setIsThinking(true);
       setStatus("thinking");
 
-      const startAttempt = question;
+      const startAttempt = normalized;
 
       try {
-        const chatData = await postJson(`${apiBaseUrl}/api/chat`, {
-          message: question,
-          practiceArea,
-        });
+        let chatData = null;
+        if (normalized.files.length > 0) {
+          const form = new FormData();
+          form.append("message", question);
+          form.append("practiceArea", practiceArea);
+          for (const file of normalized.files) {
+            form.append("caseFiles", file);
+          }
+          const res = await fetch(`${apiBaseUrl}/api/chat`, {
+            method: "POST",
+            body: form,
+          });
+          const text = await res.text();
+          chatData = text ? JSON.parse(text) : {};
+          if (!res.ok) {
+            throw new Error(chatData?.error || `Request failed with ${res.status}`);
+          }
+        } else {
+          chatData = await postJson(`${apiBaseUrl}/api/chat`, {
+            message: question,
+            practiceArea,
+          });
+        }
 
         const reply = chatData?.reply;
         if (!reply) throw new Error("Empty Claude reply");
-        setClaudeMode(inferClaudeMode(reply));
+        setClaudeMode(chatData?.mode || inferClaudeMode(reply));
 
         setMessages((prev) => [
           ...prev,

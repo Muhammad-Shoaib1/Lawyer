@@ -54,13 +54,17 @@ function detectUrgentTopic(text = "") {
   return urgentKeywords.some((k) => t.includes(k));
 }
 
-async function generateClaudeReply({ apiKey, message, practiceArea }) {
+async function generateClaudeReply({ apiKey, message, practiceArea, caseContext }) {
   const anthropic = new Anthropic({ apiKey });
 
-  const userText = [
+  const sections = [
     `Practice area: ${practiceArea || "General"}.`,
     `User question: ${message}`,
-  ].join("\n");
+  ];
+  if (caseContext) {
+    sections.push(`Case files context (user-uploaded excerpts):\n${caseContext}`);
+  }
+  const userText = sections.join("\n\n");
 
   const systemPrompt = buildSystemPrompt();
   let response = null;
@@ -102,7 +106,7 @@ async function generateClaudeReply({ apiKey, message, practiceArea }) {
 
   const urgentTopic = detectUrgentTopic(`${practiceArea || ""} ${message}`);
 
-  return { reply, urgentTopic };
+  return { reply, urgentTopic, mode: "live", modelUsed: cachedWorkingModel };
 }
 
 module.exports = { generateClaudeReply, detectUrgentTopic };

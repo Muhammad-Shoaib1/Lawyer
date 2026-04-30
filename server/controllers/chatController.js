@@ -1,6 +1,65 @@
 const ChatHistory = require("../models/ChatHistory");
 const AnalyticsEvent = require("../models/AnalyticsEvent");
 const { generateClaudeReply, detectUrgentTopic } = require("../utils/claude");
+const MAX_CASE_CONTEXT_CHARS = 7000;
+const ALLOWED_TEXT_EXTENSIONS = new Set([
+  ".txt",
+  ".md",
+  ".markdown",
+  ".csv",
+  ".json",
+  ".xml",
+  ".html",
+  ".htm",
+  ".log",
+]);
+
+function normalizeString(v) {
+  return typeof v === "string" ? v.trim() : "";
+}
+
+function getExt(filename = "") {
+  const idx = filename.lastIndexOf(".");
+  return idx >= 0 ? filename.slice(idx).toLowerCase() : "";
+}
+
+function parseBody(req) {
+  const raw = req.body || {};
+  const message = normalizeString(raw.message);
+  const practiceArea = normalizeString(raw.practiceArea) || "General";
+  return { message, practiceArea };
+}
+
+function buildCaseContext(files = []) {
+  if (!Array.isArray(files) || files.length === 0) {
+    return { context: "", acceptedFiles: [], skippedFiles: [] };
+  }
+
+  const acceptedFiles = [];
+  const skippedFiles = [];
+  const snippets = [];
+
+  for (const file of files) {
+    const ext = getExt(file?.originalname || "");
+    const baseName = file?.originalname || "uploaded-file";
+    if (!ALLOWED_TEXT_EXTENSIONS.has(ext)) {
+      skippedFiles.push(`${baseName} (unsupported type)`);
+      continue;
+    }
+
+    const asText = String(file?.buffer?.toString("utf8") || "").trim();
+    if (!asText) {
+      skippedFiles.push(`${baseName} (empty or unreadable)`);
+      continue;
+    }
+
+    acceptedFiles.push(baseName);
+    snippets.push(`File: ${baseName}\n${asText.slice(0, 2500)}`);
+  }
+
+  const context = snippets.join("\n\n---\n\n").slice(0, MAX_CASE_CONTEXT_CHARS);
+  return { context, acceptedFiles, skippedFiles };
+}
 
 function getUserAgent(req) {
   return (
@@ -48,18 +107,21 @@ function buildAnthropicFailureReply(err) {
 }
 
 async function chatController(req, res) {
-  const { message, practiceArea } = req.body || {};
+  const { message, practiceArea } = parseBody(req);
 
   if (typeof message !== "string" || !message.trim()) {
     return res.status(400).json({ error: "message is required" });
   }
 
   const userMessage = message.trim();
-  const area = typeof practiceArea === "string" ? practiceArea : "General";
+  const area = practiceArea;
+  const uploadedFiles = req.files || [];
+  const caseData = buildCaseContext(uploadedFiles);
 
   const startTs = Date.now();
   let reply = "";
   let urgentTopic = false;
+  let mode = "fallback";
 
   try {
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -68,14 +130,17 @@ async function chatController(req, res) {
       // Keeps the demo runnable without secrets; real deployment uses Claude.
       reply = buildFallbackReply({ practiceArea: area, message: userMessage });
       urgentTopic = detectUrgentTopic(`${area || ""} ${userMessage}`);
+      mode = "fallback";
     } else {
       const result = await generateClaudeReply({
         apiKey,
         message: userMessage,
         practiceArea: area,
+        caseContext: caseData.context,
       });
       reply = result.reply;
       urgentTopic = result.urgentTopic;
+      mode = result.mode || "live";
     }
 
     const latencyMs = Date.now() - startTs;
@@ -87,7 +152,12 @@ async function chatController(req, res) {
         userMessage,
         assistantReply: reply,
         urgentTopic,
-        meta: { userAgent: getUserAgent(req) },
+        meta: {
+          userAgent: getUserAgent(req),
+          uploadedFiles: caseData.acceptedFiles,
+          skippedFiles: caseData.skippedFiles,
+          mode,
+        },
       });
 
       await AnalyticsEvent.create({
@@ -102,7 +172,14 @@ async function chatController(req, res) {
       console.warn("[mongo] failed saving chat/analytics:", dbErr?.message);
     }
 
-    return res.json({ reply });
+    return res.json({
+      reply,
+      mode,
+      fileContext: {
+        acceptedFiles: caseData.acceptedFiles,
+        skippedFiles: caseData.skippedFiles,
+      },
+    });
   } catch (err) {
     const latencyMs = Date.now() - startTs;
     console.error("[chat] failed:", err);
@@ -127,7 +204,14 @@ async function chatController(req, res) {
       // ignore db failure
     }
 
-    return res.json({ reply: fallback });
+    return res.json({
+      reply: fallback,
+      mode: "fallback",
+      fileContext: {
+        acceptedFiles: caseData.acceptedFiles,
+        skippedFiles: caseData.skippedFiles,
+      },
+    });
   }
 }
 

@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 const practiceAreas = [
   "Family Law",
@@ -31,6 +33,7 @@ export default function ChatBox({
   chatError,
 }) {
   const [draft, setDraft] = useState("");
+  const [caseFiles, setCaseFiles] = useState([]);
   const [isSpeechSupported, setIsSpeechSupported] = useState(true);
   const recognitionRef = useRef(null);
   const lastInterimRef = useRef("");
@@ -114,7 +117,8 @@ export default function ChatBox({
     const t = draft.trim();
     if (!t) return;
     setDraft("");
-    onSubmitMessage?.(t);
+    onSubmitMessage?.({ text: t, files: caseFiles });
+    setCaseFiles([]);
   };
 
   return (
@@ -164,6 +168,26 @@ export default function ChatBox({
           Send
         </button>
       </div>
+      <div className="smallRow" style={{ marginTop: 8 }}>
+        <input
+          type="file"
+          multiple
+          disabled={isThinking}
+          onChange={(e) => {
+            const next = Array.from(e.target.files || []);
+            setCaseFiles(next.slice(0, 5));
+          }}
+          aria-label="Upload case files"
+        />
+        <div className="statusText">
+          Upload up to 5 text files (.txt, .md, .csv, .json, .xml, .html, .log)
+        </div>
+      </div>
+      {caseFiles.length > 0 ? (
+        <div className="statusText" style={{ marginTop: 6 }}>
+          Attached: {caseFiles.map((f) => f.name).join(", ")}
+        </div>
+      ) : null}
 
       <div className="smallRow">
         <button
@@ -194,7 +218,11 @@ export default function ChatBox({
             <div className="metaLine">
               {m.role === "user" ? "You" : "Assistant"} • {formatTime(m.at)}
             </div>
-            {m.text}
+            {m.role === "assistant" ? (
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
+            ) : (
+              m.text
+            )}
           </div>
         ))}
       </div>
