@@ -14,6 +14,20 @@ const practiceAreas = [
   "Intellectual Property",
   "Tax Law",
 ];
+const COUNTRY_STATES = {
+  "United States": [
+    "California",
+    "Texas",
+    "New York",
+    "Florida",
+    "Illinois",
+    "Pennsylvania",
+  ],
+  Pakistan: ["Punjab", "Sindh", "Khyber Pakhtunkhwa", "Balochistan", "Islamabad"],
+  India: ["Maharashtra", "Delhi", "Karnataka", "Tamil Nadu", "Uttar Pradesh"],
+  Canada: ["Ontario", "Quebec", "British Columbia", "Alberta", "Manitoba"],
+  "United Kingdom": ["England", "Scotland", "Wales", "Northern Ireland"],
+};
 
 function formatTime(d) {
   try {
@@ -24,13 +38,20 @@ function formatTime(d) {
 }
 
 export default function ChatBox({
+  country,
+  stateRegion,
+  onCountryChange,
+  onStateRegionChange,
   practiceArea,
   onPracticeAreaChange,
   messages,
   onSubmitMessage,
   isThinking,
   onVoiceStatusChange,
+  onBargeInDetected,
+  status,
   chatError,
+  onDownloadConversation,
 }) {
   const [draft, setDraft] = useState("");
   const [caseFiles, setCaseFiles] = useState([]);
@@ -89,9 +110,11 @@ export default function ChatBox({
       if (finalText.trim()) {
         const cleaned = finalText.trim().replace(/\s+/g, " ");
         setDraft(cleaned);
+        onBargeInDetected?.(cleaned);
         onVoiceStatusChange?.("ready");
         onSubmitMessage?.(cleaned);
       } else if (interim.trim()) {
+        if (status === "speaking") onBargeInDetected?.(interim.trim());
         setDraft((prev) => {
           // Avoid fighting the user while they type.
           if (prev && prev !== lastInterimRef.current) return prev;
@@ -123,6 +146,44 @@ export default function ChatBox({
 
   return (
     <div>
+      <div className="sectionTitle">
+        <div className="hint">Jurisdiction</div>
+      </div>
+
+      <div className="smallRow" style={{ marginTop: 0 }}>
+        <select
+          className="select"
+          value={country}
+          disabled={isThinking}
+          onChange={(e) => {
+            const nextCountry = e.target.value;
+            onCountryChange?.(nextCountry);
+            const firstState = COUNTRY_STATES[nextCountry]?.[0] || "General";
+            onStateRegionChange?.(firstState);
+          }}
+          aria-label="Country"
+        >
+          {Object.keys(COUNTRY_STATES).map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+        <select
+          className="select"
+          value={stateRegion}
+          disabled={isThinking}
+          onChange={(e) => onStateRegionChange?.(e.target.value)}
+          aria-label="State or region"
+        >
+          {(COUNTRY_STATES[country] || ["General"]).map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+      </div>
+
       <div className="sectionTitle">
         <div className="hint">Practice Area</div>
       </div>
@@ -244,6 +305,16 @@ export default function ChatBox({
           ) : null}
         </div>
       ) : null}
+      <div className="smallRow" style={{ marginTop: 10 }}>
+        <button
+          className="btn"
+          type="button"
+          onClick={onDownloadConversation}
+          disabled={!messages.length}
+        >
+          Download Conversation
+        </button>
+      </div>
     </div>
   );
 }

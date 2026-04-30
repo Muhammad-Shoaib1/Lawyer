@@ -160,6 +160,8 @@ async function postJson(url, body, { timeoutMs = 20000 } = {}) {
 }
 
 export default function MainSection() {
+  const [country, setCountry] = useState("United States");
+  const [stateRegion, setStateRegion] = useState("California");
   const [practiceArea, setPracticeArea] = useState("Family Law");
   const [refreshNonce] = useState(() => Date.now() + Math.floor(Math.random() * 100000));
   const [status, setStatus] = useState("ready"); // ready | listening | thinking | speaking
@@ -179,6 +181,7 @@ export default function MainSection() {
   const [isThinking, setIsThinking] = useState(false);
   const [chatError, setChatError] = useState(null);
   const [claudeMode, setClaudeMode] = useState("fallback"); // unknown | live | fallback
+  const [lastClaudeError, setLastClaudeError] = useState("");
 
   const apiBaseUrl = getApiBaseUrl();
   const suggested = useMemo(
@@ -209,6 +212,25 @@ export default function MainSection() {
     },
     [muted]
   );
+
+  const stopSpeakingNow = useCallback(() => {
+    try {
+      window.speechSynthesis?.cancel?.();
+    } catch {
+      // ignore
+    }
+    const live = liveSessionRef.current;
+    if (live) {
+      try {
+        live.interrupt?.();
+        live.stopSpeaking?.();
+        live.stopAvatar?.();
+      } catch {
+        // best effort
+      }
+    }
+    setStatus("listening");
+  }, []);
 
   const inferClaudeMode = useCallback((reply) => {
     const text = String(reply || "").toLowerCase();
@@ -249,6 +271,8 @@ export default function MainSection() {
           const form = new FormData();
           form.append("message", question);
           form.append("practiceArea", practiceArea);
+          form.append("country", country);
+          form.append("state", stateRegion);
           for (const file of normalized.files) {
             form.append("caseFiles", file);
           }
@@ -265,12 +289,16 @@ export default function MainSection() {
           chatData = await postJson(`${apiBaseUrl}/api/chat`, {
             message: question,
             practiceArea,
+            country,
+            state: stateRegion,
           });
         }
 
         const reply = chatData?.reply;
         if (!reply) throw new Error("Empty Claude reply");
-        setClaudeMode(chatData?.mode || inferClaudeMode(reply));
+        const nextMode = chatData?.mode || inferClaudeMode(reply);
+        setClaudeMode(nextMode);
+        setLastClaudeError(nextMode === "fallback" ? chatData?.modeReason || "" : "");
 
         setMessages((prev) => [
           ...prev,
@@ -305,6 +333,7 @@ export default function MainSection() {
         setIsThinking(false);
       } catch (err) {
         console.error("[chat] error:", err);
+        setLastClaudeError(err?.message || "Unknown chat error");
         setIsThinking(false);
         setStatus("ready");
         setChatError({
@@ -314,7 +343,7 @@ export default function MainSection() {
         });
       }
     },
-    [apiBaseUrl, practiceArea, sessionId, speakFallback, inferClaudeMode]
+    [apiBaseUrl, practiceArea, country, stateRegion, sessionId, speakFallback, inferClaudeMode]
   );
 
   const onVoiceStatusChange = (nextStatus) => {
@@ -327,6 +356,28 @@ export default function MainSection() {
     // For a demo, suggested questions submit immediately.
     await handleAsk(q);
   };
+
+  const downloadConversation = useCallback(() => {
+    const lines = [];
+    lines.push(`Country: ${country}`);
+    lines.push(`State/Region: ${stateRegion}`);
+    lines.push(`Practice Area: ${practiceArea}`);
+    lines.push(`Generated: ${new Date().toISOString()}`);
+    lines.push("");
+    for (const m of messages) {
+      const who = m.role === "user" ? "You" : "Assistant";
+      lines.push(`[${who}] ${new Date(m.at).toLocaleString()}`);
+      lines.push(String(m.text || ""));
+      lines.push("");
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `lawyerai-conversation-${Date.now()}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [messages, country, stateRegion, practiceArea]);
 
   const startSession = useCallback(async () => {
     setAvatarError("");
@@ -470,17 +521,30 @@ export default function MainSection() {
 
             <div className="glass" style={{ padding: 16 }}>
               <ChatBox
+                country={country}
+                stateRegion={stateRegion}
+                onCountryChange={setCountry}
+                onStateRegionChange={setStateRegion}
                 practiceArea={practiceArea}
                 onPracticeAreaChange={(v) => setPracticeArea(v)}
                 messages={messages}
                 onSubmitMessage={handleAsk}
                 isThinking={isThinking}
                 onVoiceStatusChange={onVoiceStatusChange}
+                onBargeInDetected={stopSpeakingNow}
+                status={status}
                 chatError={chatError}
+                onDownloadConversation={downloadConversation}
               />
               <div className="hint" style={{ marginTop: 10 }}>
                 This demo provides general information and does not create an attorney-client relationship.
               </div>
+              {claudeMode === "fallback" ? (
+                <div className="hint" style={{ marginTop: 8, color: "rgba(251,191,36,0.95)" }}>
+                  Claude is running in fallback mode. Check `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL` in server `.env`.
+                  {lastClaudeError ? ` Last error: ${lastClaudeError}` : ""}
+                </div>
+              ) : null}
             </div>
           </div>
 

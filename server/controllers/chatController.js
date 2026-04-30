@@ -27,7 +27,9 @@ function parseBody(req) {
   const raw = req.body || {};
   const message = normalizeString(raw.message);
   const practiceArea = normalizeString(raw.practiceArea) || "General";
-  return { message, practiceArea };
+  const country = normalizeString(raw.country) || "United States";
+  const state = normalizeString(raw.state) || "General";
+  return { message, practiceArea, country, state };
 }
 
 function buildCaseContext(files = []) {
@@ -107,7 +109,7 @@ function buildAnthropicFailureReply(err) {
 }
 
 async function chatController(req, res) {
-  const { message, practiceArea } = parseBody(req);
+  const { message, practiceArea, country, state } = parseBody(req);
 
   if (typeof message !== "string" || !message.trim()) {
     return res.status(400).json({ error: "message is required" });
@@ -122,6 +124,7 @@ async function chatController(req, res) {
   let reply = "";
   let urgentTopic = false;
   let mode = "fallback";
+  let modeReason = "";
 
   try {
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -131,45 +134,53 @@ async function chatController(req, res) {
       reply = buildFallbackReply({ practiceArea: area, message: userMessage });
       urgentTopic = detectUrgentTopic(`${area || ""} ${userMessage}`);
       mode = "fallback";
+      modeReason = "ANTHROPIC_API_KEY is missing on server.";
     } else {
       const result = await generateClaudeReply({
         apiKey,
         message: userMessage,
         practiceArea: area,
+        country,
+        state,
         caseContext: caseData.context,
       });
       reply = result.reply;
       urgentTopic = result.urgentTopic;
       mode = result.mode || "live";
+      modeReason = "";
     }
 
     const latencyMs = Date.now() - startTs;
 
-    // Save chat history + analytics (MongoDB is optional for local demo).
-    try {
-      await ChatHistory.create({
-        practiceArea: area,
-        userMessage,
-        assistantReply: reply,
-        urgentTopic,
-        meta: {
-          userAgent: getUserAgent(req),
-          uploadedFiles: caseData.acceptedFiles,
-          skippedFiles: caseData.skippedFiles,
-          mode,
-        },
-      });
+    // MongoDB is optional; avoid long buffering delays when disconnected.
+    if (require("mongoose").connection.readyState === 1) {
+      try {
+        await ChatHistory.create({
+          practiceArea: area,
+          userMessage,
+          assistantReply: reply,
+          urgentTopic,
+          meta: {
+            userAgent: getUserAgent(req),
+            uploadedFiles: caseData.acceptedFiles,
+            skippedFiles: caseData.skippedFiles,
+            mode,
+            country,
+            state,
+          },
+        });
 
-      await AnalyticsEvent.create({
-        practiceArea: area,
-        route: "/api/chat",
-        eventType: "chat_generate",
-        success: true,
-        sessionId: null,
-        meta: { latencyMs },
-      });
-    } catch (dbErr) {
-      console.warn("[mongo] failed saving chat/analytics:", dbErr?.message);
+        await AnalyticsEvent.create({
+          practiceArea: area,
+          route: "/api/chat",
+          eventType: "chat_generate",
+          success: true,
+          sessionId: null,
+          meta: { latencyMs, country, state },
+        });
+      } catch (dbErr) {
+        console.warn("[mongo] failed saving chat/analytics:", dbErr?.message);
+      }
     }
 
     return res.json({
@@ -179,6 +190,8 @@ async function chatController(req, res) {
         acceptedFiles: caseData.acceptedFiles,
         skippedFiles: caseData.skippedFiles,
       },
+      jurisdiction: { country, state },
+      modeReason,
     });
   } catch (err) {
     const latencyMs = Date.now() - startTs;
@@ -190,27 +203,31 @@ async function chatController(req, res) {
       anthropicFailureReply ||
       buildFallbackReply({ practiceArea: area, message: userMessage });
 
-    try {
-      await AnalyticsEvent.create({
-        practiceArea: area,
-        route: "/api/chat",
-        eventType: "chat_generate",
-        success: false,
-        error: err?.message || "unknown error",
-        sessionId: null,
-        meta: { latencyMs },
-      });
-    } catch (dbErr) {
-      // ignore db failure
+    if (require("mongoose").connection.readyState === 1) {
+      try {
+        await AnalyticsEvent.create({
+          practiceArea: area,
+          route: "/api/chat",
+          eventType: "chat_generate",
+          success: false,
+          error: err?.message || "unknown error",
+          sessionId: null,
+          meta: { latencyMs, country, state },
+        });
+      } catch (dbErr) {
+        // ignore db failure
+      }
     }
 
     return res.json({
       reply: fallback,
       mode: "fallback",
+      modeReason: err?.message || "Claude request failed.",
       fileContext: {
         acceptedFiles: caseData.acceptedFiles,
         skippedFiles: caseData.skippedFiles,
       },
+      jurisdiction: { country, state },
     });
   }
 }

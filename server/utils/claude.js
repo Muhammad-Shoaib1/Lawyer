@@ -2,6 +2,8 @@ const Anthropic = require("@anthropic-ai/sdk");
 
 const DEFAULT_MODEL_CANDIDATES = [
   process.env.ANTHROPIC_MODEL,
+  "claude-sonnet-4-20250514",
+  "claude-3-7-sonnet-20250219",
   "claude-sonnet-4-6",
   "claude-opus-4-7",
   "claude-opus-4-6",
@@ -18,9 +20,11 @@ Never claim to be a lawyer.
 
 Use professional, calm, concise tone.
 
-Keep answers brief by default (about 3-5 short sentences) unless the user explicitly asks for detail.
+Keep answers brief by default (about 90-140 words) unless the user explicitly asks for detail.
 
 Always mention: “This is general information and laws vary by jurisdiction.”
+
+When possible, cite 1-3 concrete legal references relevant to the user's jurisdiction (for example constitution articles, statute names/sections, or procedural rules). If uncertain, explicitly say the reference should be verified with local official sources.
 
 Recommend consultation when urgent.
 
@@ -54,11 +58,20 @@ function detectUrgentTopic(text = "") {
   return urgentKeywords.some((k) => t.includes(k));
 }
 
-async function generateClaudeReply({ apiKey, message, practiceArea, caseContext }) {
+async function generateClaudeReply({
+  apiKey,
+  message,
+  practiceArea,
+  country,
+  state,
+  caseContext,
+}) {
   const anthropic = new Anthropic({ apiKey });
 
   const sections = [
     `Practice area: ${practiceArea || "General"}.`,
+    `Jurisdiction country: ${country || "United States"}.`,
+    `Jurisdiction state/region: ${state || "General"}.`,
     `User question: ${message}`,
   ];
   if (caseContext) {
@@ -78,7 +91,7 @@ async function generateClaudeReply({ apiKey, message, practiceArea, caseContext 
     try {
       response = await anthropic.messages.create({
         model,
-        max_tokens: 500,
+        max_tokens: 320,
         system: systemPrompt,
         messages: [{ role: "user", content: userText }],
       });
