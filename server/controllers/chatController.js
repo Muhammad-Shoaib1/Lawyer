@@ -254,5 +254,38 @@ async function chatController(req, res) {
   }
 }
 
-module.exports = { chatController };
+async function chatStreamController(req, res) {
+  console.log("[chat-stream] Request received.");
+  const { message, practiceArea, country, state } = parseBody(req);
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+
+  if (!apiKey) {
+    console.warn("[chat-stream] No API key, falling back to static reply.");
+    const reply = buildFallbackReply({ practiceArea: "General", message });
+    return res.json({ reply, mode: "fallback" });
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  try {
+    const stream = generateClaudeReplyStream({
+      apiKey,
+      message,
+    });
+
+    for await (const chunk of stream) {
+      res.write(`data: ${JSON.stringify({ text: chunk })}\n\n`);
+    }
+    res.write("data: [DONE]\n\n");
+    res.end();
+  } catch (err) {
+    console.error("[chat-stream] Error during streaming:", err);
+    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+    res.end();
+  }
+}
+
+module.exports = { chatController, chatStreamController };
 

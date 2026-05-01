@@ -18,13 +18,18 @@ function formatNow() {
 
 function getApiBaseUrl() {
   const url = import.meta.env.VITE_API_BASE_URL;
-  if (url) return url;
+  if (url) {
+    console.log("[config] Using VITE_API_BASE_URL:", url);
+    return url;
+  }
   
   // If running on Vercel and no API URL is set, assume same origin /api
   if (typeof window !== "undefined" && window.location.hostname.includes("vercel.app")) {
+    console.log("[config] Detected Vercel environment, using relative path for API.");
     return ""; // Relative path
   }
   
+  console.log("[config] Falling back to localhost:5000 for API.");
   return "http://localhost:5000";
 }
 
@@ -156,6 +161,7 @@ export default function MainSection() {
   }, []);
 
   const handleAsk = useCallback(
+    async (messageText) => {
       console.log("[chat] Handling question:", messageText);
       const normalized =
         typeof messageText === "string"
@@ -179,83 +185,88 @@ export default function MainSection() {
       setIsThinking(true);
       setStatus("thinking");
 
-      const startAttempt = normalized;
-
       try {
-        let chatData = null;
-        if (normalized.files.length > 0) {
-          const form = new FormData();
-          form.append("message", question);
+        console.log("[chat] Requesting Claude stream...");
+        const res = await fetch(`${apiBaseUrl}/api/chat-stream`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: question }),
+        });
 
-          for (const file of normalized.files) {
-            form.append("caseFiles", file);
-          }
-          const res = await fetch(`${apiBaseUrl}/api/chat`, {
-            method: "POST",
-            body: form,
-          });
-          const text = await res.text();
-          chatData = text ? JSON.parse(text) : {};
-          if (!res.ok) {
-            throw new Error(chatData?.error || `Request failed with ${res.status}`);
-          }
-        } else {
-          console.log("[chat] Requesting Claude reply (no files)...");
-          chatData = await postJson(`${apiBaseUrl}/api/chat`, {
-            message: question,
-          });
-        }
-        console.log("[chat] Received response:", chatData);
+        if (!res.ok) throw new Error(`Stream request failed with ${res.status}`);
 
-        const reply = chatData?.reply;
-        if (!reply) throw new Error("Empty Claude reply");
-        const nextMode = inferClaudeMode(reply);
-        if (nextMode === "fallback") {
-          console.warn(`[claude] Fallback mode active. ${chatData?.modeReason || ""}`);
-        }
-        setClaudeMode(nextMode);
-        setLastClaudeError(nextMode === "fallback" ? chatData?.modeReason || "" : "");
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let fullReply = "";
 
+        // Add placeholder assistant message
         setMessages((prev) => [
           ...prev,
-          { role: "assistant", text: reply, at: formatNow() },
+          { role: "assistant", text: "", at: formatNow() },
         ]);
 
-        // Speak via LiveAvatar when available; Claude text is the single source of truth.
-        if (sessionId) {
-          // Lip-sync + gestures are produced by the official LiveAvatar Web SDK.
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split("\n");
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const dataStr = line.slice(6).trim();
+              if (dataStr === "[DONE]") break;
+              try {
+                const data = JSON.parse(dataStr);
+                if (data.text) {
+                  fullReply += data.text;
+                  // Update the last message
+                  setMessages((prev) => {
+                    const next = [...prev];
+                    const lastIdx = next.length - 1;
+                    if (next[lastIdx].role === "assistant") {
+                      next[lastIdx] = { ...next[lastIdx], text: fullReply };
+                    }
+                    return next;
+                  });
+                }
+              } catch (e) {
+                // Ignore partial JSON chunks
+              }
+            }
+          }
+        }
+
+        console.log("[chat] Stream completed.");
+        setIsThinking(false);
+
+        // Speak via LiveAvatar when available
+        if (sessionId && fullReply) {
           try {
             if (liveSessionRef.current) {
               setStatus("speaking");
-              liveSessionRef.current.repeat(reply);
-              // Safety net: if events don't arrive, return UI to normal.
-              if (speakTimeoutRef.current) {
-                clearTimeout(speakTimeoutRef.current);
-              }
-              speakTimeoutRef.current = setTimeout(() => {
-                setStatus("ready");
-              }, 12000);
+              liveSessionRef.current.repeat(fullReply);
+              if (speakTimeoutRef.current) clearTimeout(speakTimeoutRef.current);
+              speakTimeoutRef.current = setTimeout(() => setStatus("ready"), 12000);
             } else {
-              speakFallback(reply);
+              speakFallback(fullReply);
             }
           } catch (avatarErr) {
             console.warn("[avatar] repeat failed:", avatarErr);
-            speakFallback(reply);
+            speakFallback(fullReply);
           }
         } else {
           setStatus("ready");
         }
-
-        setIsThinking(false);
       } catch (err) {
-        console.error("[chat] error:", err);
-        setLastClaudeError(err?.message || "Unknown chat error");
+        console.error("[chat] Stream error:", err);
+        setLastClaudeError(err?.message || "Streaming error");
         setIsThinking(false);
         setStatus("ready");
         setChatError({
-          message: err?.message || "Sorry—temporary issue. Please try again.",
+          message: "Connection lost. Please try again.",
           canRetry: true,
-          onRetry: () => handleAsk(startAttempt),
+          onRetry: () => handleAsk(messageText),
         });
       }
     },

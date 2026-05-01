@@ -129,5 +129,42 @@ async function generateClaudeReply({
   return { reply, urgentTopic, mode: "live", modelUsed: cachedWorkingModel };
 }
 
-module.exports = { generateClaudeReply, detectUrgentTopic };
+async function* generateClaudeReplyStream({
+  apiKey,
+  message,
+  practiceArea,
+  country,
+  state,
+  caseContext,
+  skippedFiles = [],
+}) {
+  const anthropic = new Anthropic({ apiKey });
+  const sections = [`User question: ${message}`];
+  if (caseContext) {
+    sections.push(`Case files context (user-uploaded excerpts):\n${caseContext}`);
+  }
+  if (skippedFiles.length > 0) {
+    sections.push(`System Note: Unsupported files were skipped: ${skippedFiles.join(", ")}.`);
+  }
+  const userText = sections.join("\n\n");
+  const systemPrompt = buildSystemPrompt();
+
+  const model = cachedWorkingModel || DEFAULT_MODEL_CANDIDATES[0];
+  console.log(`[claude] Streaming starting with model: ${model}`);
+
+  const stream = await anthropic.messages.stream({
+    model,
+    max_tokens: 300,
+    system: systemPrompt,
+    messages: [{ role: "user", content: userText }],
+  });
+
+  for await (const event of stream) {
+    if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+      yield event.delta.text;
+    }
+  }
+}
+
+module.exports = { generateClaudeReply, generateClaudeReplyStream, detectUrgentTopic };
 

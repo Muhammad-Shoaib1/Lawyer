@@ -1,5 +1,5 @@
 const express = require("express");
-const { chatController } = require("../controllers/chatController");
+const { chatController, chatStreamController } = require("../controllers/chatController");
 const multer = require("multer");
 
 const router = express.Router();
@@ -13,6 +13,9 @@ const upload = multer({
 
 // POST /api/chat
 router.post("/chat", upload.array("caseFiles", 5), chatController);
+
+// POST /api/chat-stream
+router.post("/chat-stream", upload.array("caseFiles", 5), chatStreamController);
 
 module.exports = router;
 
