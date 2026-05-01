@@ -187,17 +187,36 @@ export default function MainSection() {
 
       try {
         console.log("[chat] Requesting Claude stream...");
-        const res = await fetch(`${apiBaseUrl}/api/chat-stream`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: question }),
-        });
+        let res;
+        if (normalized.files.length > 0) {
+          const form = new FormData();
+          form.append("message", question);
+          for (const file of normalized.files) {
+            form.append("caseFiles", file);
+          }
+          res = await fetch(`${apiBaseUrl}/api/chat-stream`, {
+            method: "POST",
+            body: form,
+          });
+        } else {
+          res = await fetch(`${apiBaseUrl}/api/chat-stream`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: question }),
+          });
+        }
 
-        if (!res.ok) throw new Error(`Stream request failed with ${res.status}`);
+        console.log("[chat] Response status:", res.status, res.headers.get("Content-Type"));
+
+        if (!res.ok) {
+          const errorText = await res.text();
+          throw new Error(`Stream request failed: ${res.status} - ${errorText}`);
+        }
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let fullReply = "";
+        let buffer = "";
 
         // Add placeholder assistant message
         setMessages((prev) => [
@@ -210,34 +229,44 @@ export default function MainSection() {
           if (done) break;
 
           const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split("\n");
+          console.log("[chat] Raw chunk received:", chunk);
+          buffer += chunk;
+
+          const lines = buffer.split("\n");
+          // Keep the last partial line in the buffer
+          buffer = lines.pop();
 
           for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              const dataStr = line.slice(6).trim();
-              if (dataStr === "[DONE]") break;
-              try {
-                const data = JSON.parse(dataStr);
-                if (data.text) {
-                  fullReply += data.text;
-                  // Update the last message
-                  setMessages((prev) => {
-                    const next = [...prev];
-                    const lastIdx = next.length - 1;
-                    if (next[lastIdx].role === "assistant") {
-                      next[lastIdx] = { ...next[lastIdx], text: fullReply };
-                    }
-                    return next;
-                  });
-                }
-              } catch (e) {
-                // Ignore partial JSON chunks
+            const trimmedLine = line.trim();
+            if (!trimmedLine || !trimmedLine.startsWith("data: ")) continue;
+
+            const dataStr = trimmedLine.slice(6).trim();
+            if (dataStr === "[DONE]") {
+              console.log("[chat] DONE signal received.");
+              break;
+            }
+
+            try {
+              const data = JSON.parse(dataStr);
+              if (data.text) {
+                fullReply += data.text;
+                // Update the last message in state
+                setMessages((prev) => {
+                  const next = [...prev];
+                  const lastIdx = next.length - 1;
+                  if (next[lastIdx] && next[lastIdx].role === "assistant") {
+                    next[lastIdx] = { ...next[lastIdx], text: fullReply };
+                  }
+                  return next;
+                });
               }
+            } catch (e) {
+              console.error("[chat] Failed to parse SSE data:", dataStr, e);
             }
           }
         }
 
-        console.log("[chat] Stream completed.");
+        console.log("[chat] Stream fully completed. Final length:", fullReply.length);
         setIsThinking(false);
 
         // Speak via LiveAvatar when available

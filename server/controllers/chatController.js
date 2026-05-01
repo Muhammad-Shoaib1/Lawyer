@@ -255,29 +255,41 @@ async function chatController(req, res) {
 }
 
 async function chatStreamController(req, res) {
-  console.log("[chat-stream] Request received.");
-  const { message, practiceArea, country, state } = parseBody(req);
+  console.log("[chat-stream] Controller hit. Message:", req.body?.message);
+  const { message } = parseBody(req);
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey) {
-    console.warn("[chat-stream] No API key, falling back to static reply.");
+    console.warn("[chat-stream] No API key, sending fallback JSON.");
     const reply = buildFallbackReply({ practiceArea: "General", message });
     return res.json({ reply, mode: "fallback" });
   }
 
+  const uploadedFiles = req.files || [];
+  const caseData = await buildCaseContext(uploadedFiles);
+  console.log("[chat-stream] Case context length:", caseData.context.length);
+
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
 
   try {
+    console.log("[chat-stream] Initializing Claude stream...");
     const stream = generateClaudeReplyStream({
       apiKey,
       message,
+      caseContext: caseData.context,
+      skippedFiles: caseData.skippedFiles,
     });
 
+    let chunkCount = 0;
     for await (const chunk of stream) {
+      chunkCount++;
       res.write(`data: ${JSON.stringify({ text: chunk })}\n\n`);
     }
+
+    console.log(`[chat-stream] Stream finished. Total chunks sent: ${chunkCount}`);
     res.write("data: [DONE]\n\n");
     res.end();
   } catch (err) {
