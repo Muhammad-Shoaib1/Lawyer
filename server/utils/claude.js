@@ -11,8 +11,18 @@ const DEFAULT_MODEL_CANDIDATES = [
 ].filter(Boolean);
 let cachedWorkingModel = null;
 
-function buildSystemPrompt() {
+function buildSystemPrompt(mood = "Supportive") {
+  let moodInstructions = "";
+  if (mood === "Supportive") {
+    moodInstructions = "Your tone is empathetic, supportive, and reassuring. Use phrases like 'I understand' and 'I'm here to help'.";
+  } else if (mood === "Challenging") {
+    moodInstructions = "Your tone is critical and skeptical, like an opposing counsel. Question the user's assumptions and highlight potential weaknesses in their position.";
+  } else if (mood === "Hostile") {
+    moodInstructions = "Your tone is short, aggressive, and dismissive. Be very direct and don't mince words. Act like a tough prosecutor who isn't impressed.";
+  }
+
   return `You are an AI legal intake assistant for a professional law firm.
+${moodInstructions}
 
 Provide only general information.
 
@@ -68,6 +78,7 @@ async function generateClaudeReply({
   state,
   caseContext,
   skippedFiles = [],
+  mood = "Supportive",
 }) {
   const anthropic = new Anthropic({ apiKey });
 
@@ -82,7 +93,7 @@ async function generateClaudeReply({
   }
   const userText = sections.join("\n\n");
 
-  const systemPrompt = buildSystemPrompt();
+  const systemPrompt = buildSystemPrompt(mood);
   let response = null;
   let lastErr = null;
 
@@ -137,6 +148,7 @@ async function* generateClaudeReplyStream({
   state,
   caseContext,
   skippedFiles = [],
+  mood = "Supportive",
 }) {
   const anthropic = new Anthropic({ apiKey });
   const sections = [`User question: ${message}`];
@@ -147,7 +159,7 @@ async function* generateClaudeReplyStream({
     sections.push(`System Note: Unsupported files were skipped: ${skippedFiles.join(", ")}.`);
   }
   const userText = sections.join("\n\n");
-  const systemPrompt = buildSystemPrompt();
+  const systemPrompt = buildSystemPrompt(mood);
 
   const model = cachedWorkingModel || DEFAULT_MODEL_CANDIDATES[0];
   console.log(`[claude] Streaming starting with model: ${model}`);

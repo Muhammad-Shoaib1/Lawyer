@@ -102,6 +102,7 @@ export default function MainSection() {
   const [chatError, setChatError] = useState(null);
   const [claudeMode, setClaudeMode] = useState("fallback"); // unknown | live | fallback
   const [lastClaudeError, setLastClaudeError] = useState("");
+  const [mood, setMood] = useState("Supportive"); // Supportive | Challenging | Hostile
 
   const apiBaseUrl = getApiBaseUrl();
   console.log("[MainSection] Initialized. API Base URL:", apiBaseUrl);
@@ -185,12 +186,46 @@ export default function MainSection() {
       setIsThinking(true);
       setStatus("thinking");
 
+      setIsThinking(true);
+      setStatus("thinking");
+
+      // Perfectly Real-Time: Immediate filler speech based on mood
+      if (sessionId && liveSessionRef.current) {
+        const fillers = {
+          Supportive: [
+            "I understand. Let me look into that for you right away...",
+            "I'm here to help. One moment while I check the legal details...",
+            "That's a valid concern. Let me analyze this for you..."
+          ],
+          Challenging: [
+            "That's a bold claim. Let's see what the law actually says...",
+            "I'll need to scrutinize that position. One moment...",
+            "Are you sure about that? Let me verify the statutes..."
+          ],
+          Hostile: [
+            "Wait right there. Let me see what the law says about your situation...",
+            "This doesn't look promising for you. Let me pull up the relevant laws...",
+            "Hold on. I'll need to check the exact wording of the law on this..."
+          ]
+        };
+        const moodFillers = fillers[mood] || fillers.Supportive;
+        const filler = moodFillers[Math.floor(Math.random() * moodFillers.length)];
+        console.log(`[avatar] Speaking filler (${mood}):`, filler);
+        try {
+          liveSessionRef.current.repeat(filler);
+        } catch (e) {
+          console.warn("[avatar] Filler speech failed:", e);
+        }
+      }
+
       try {
-        console.log("[chat] Requesting Claude stream...");
+        console.log(`[chat] Requesting Claude stream (Mood: ${mood})...`);
         let res;
+        const body = { message: question, mood };
         if (normalized.files.length > 0) {
           const form = new FormData();
           form.append("message", question);
+          form.append("mood", mood);
           for (const file of normalized.files) {
             form.append("caseFiles", file);
           }
@@ -202,7 +237,7 @@ export default function MainSection() {
           res = await fetch(`${apiBaseUrl}/api/chat-stream`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: question }),
+            body: JSON.stringify(body),
           });
         }
 
@@ -458,7 +493,27 @@ export default function MainSection() {
               Claude Active
             </div>
 
-
+            <div className="moodSelector" style={{ marginBottom: 16, display: "flex", gap: 8 }}>
+              {["Supportive", "Challenging", "Hostile"].map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setMood(m)}
+                  className={`moodBtn ${mood === m ? "active" : ""}`}
+                  style={{
+                    background: mood === m ? "rgba(217,180,90,0.25)" : "rgba(255,255,255,0.05)",
+                    color: mood === m ? "var(--gold)" : "rgba(255,255,255,0.6)",
+                    border: `1px solid ${mood === m ? "var(--gold)" : "rgba(255,255,255,0.1)"}`,
+                    padding: "6px 12px",
+                    borderRadius: "10px",
+                    fontSize: "13px",
+                    cursor: "pointer",
+                    transition: "all 0.3s ease"
+                  }}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
 
             <div className="glass" style={{ padding: 16 }}>
               <ChatBox

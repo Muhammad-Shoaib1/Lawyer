@@ -23,7 +23,8 @@ function getExt(filename = "") {
 function parseBody(req) {
   const raw = req.body || {};
   const message = normalizeString(raw.message || raw.text || raw.q);
-  return { message, practiceArea: "General", country: "United States", state: "General" };
+  const mood = raw.mood || "Supportive";
+  return { message, mood, practiceArea: "General", country: "United States", state: "General" };
 }
 
 async function buildCaseContext(files = []) {
@@ -255,8 +256,8 @@ async function chatController(req, res) {
 }
 
 async function chatStreamController(req, res) {
-  console.log("[chat-stream] Controller hit. Message:", req.body?.message);
-  const { message } = parseBody(req);
+  console.log("[chat-stream] Controller hit. Mood:", req.body?.mood);
+  const { message, mood } = parseBody(req);
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey) {
@@ -279,6 +280,7 @@ async function chatStreamController(req, res) {
     const stream = generateClaudeReplyStream({
       apiKey,
       message,
+      mood,
       caseContext: caseData.context,
       skippedFiles: caseData.skippedFiles,
     });
