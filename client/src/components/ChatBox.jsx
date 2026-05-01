@@ -2,32 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-const practiceAreas = [
-  "Family Law",
-  "Criminal Law",
-  "Civil Law",
-  "Immigration",
-  "Business Law",
-  "Employment Law",
-  "Personal Injury",
-  "Real Estate Law",
-  "Intellectual Property",
-  "Tax Law",
-];
-const COUNTRY_STATES = {
-  "United States": [
-    "California",
-    "Texas",
-    "New York",
-    "Florida",
-    "Illinois",
-    "Pennsylvania",
-  ],
-  Pakistan: ["Punjab", "Sindh", "Khyber Pakhtunkhwa", "Balochistan", "Islamabad"],
-  India: ["Maharashtra", "Delhi", "Karnataka", "Tamil Nadu", "Uttar Pradesh"],
-  Canada: ["Ontario", "Quebec", "British Columbia", "Alberta", "Manitoba"],
-  "United Kingdom": ["England", "Scotland", "Wales", "Northern Ireland"],
-};
+
 
 function formatTime(d) {
   try {
@@ -38,12 +13,6 @@ function formatTime(d) {
 }
 
 export default function ChatBox({
-  country,
-  stateRegion,
-  onCountryChange,
-  onStateRegionChange,
-  practiceArea,
-  onPracticeAreaChange,
   messages,
   onSubmitMessage,
   isThinking,
@@ -146,63 +115,7 @@ export default function ChatBox({
 
   return (
     <div>
-      <div className="sectionTitle">
-        <div className="hint">Jurisdiction</div>
-      </div>
 
-      <div className="smallRow" style={{ marginTop: 0 }}>
-        <select
-          className="select"
-          value={country}
-          disabled={isThinking}
-          onChange={(e) => {
-            const nextCountry = e.target.value;
-            onCountryChange?.(nextCountry);
-            const firstState = COUNTRY_STATES[nextCountry]?.[0] || "General";
-            onStateRegionChange?.(firstState);
-          }}
-          aria-label="Country"
-        >
-          {Object.keys(COUNTRY_STATES).map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-        <select
-          className="select"
-          value={stateRegion}
-          disabled={isThinking}
-          onChange={(e) => onStateRegionChange?.(e.target.value)}
-          aria-label="State or region"
-        >
-          {(COUNTRY_STATES[country] || ["General"]).map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="sectionTitle">
-        <div className="hint">Practice Area</div>
-      </div>
-
-      <div className="smallRow" style={{ marginTop: 0 }}>
-        <select
-          className="select"
-          value={practiceArea}
-          disabled={isThinking}
-          onChange={(e) => onPracticeAreaChange?.(e.target.value)}
-          aria-label="Practice Area"
-        >
-          {practiceAreas.map((a) => (
-            <option key={a} value={a}>
-              {a}
-            </option>
-          ))}
-        </select>
-      </div>
 
       <div className="formRow">
         <textarea
@@ -262,12 +175,13 @@ export default function ChatBox({
 
       <div className="smallRow">
         <button
-          className="btn"
+          className="btn btnVoice"
           type="button"
           disabled={!isSpeechSupported || isThinking}
           onClick={startRecognition}
         >
-          Voice Input
+          <span className="voiceIcon">🎤</span>
+          {status === "listening" ? "Listening..." : "Voice Input"}
         </button>
         <div className="statusText">
           {isSpeechSupported ? "Tip: press Ctrl/⌘ + Enter to send" : "Voice input not supported in this browser."}

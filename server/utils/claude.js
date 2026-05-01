@@ -72,9 +72,6 @@ async function generateClaudeReply({
   const anthropic = new Anthropic({ apiKey });
 
   const sections = [
-    `Practice area: ${practiceArea || "General"}.`,
-    `Jurisdiction country: ${country || "United States"}.`,
-    `Jurisdiction state/region: ${state || "General"}.`,
     `User question: ${message}`,
   ];
   if (caseContext) {

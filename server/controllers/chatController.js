@@ -23,10 +23,7 @@ function getExt(filename = "") {
 function parseBody(req) {
   const raw = req.body || {};
   const message = normalizeString(raw.message || raw.text || raw.q);
-  const practiceArea = normalizeString(raw.practiceArea) || "General";
-  const country = normalizeString(raw.country) || "United States";
-  const state = normalizeString(raw.state) || "General";
-  return { message, practiceArea, country, state };
+  return { message, practiceArea: "General", country: "United States", state: "General" };
 }
 
 async function buildCaseContext(files = []) {
@@ -130,7 +127,6 @@ async function chatController(req, res) {
       reply: "Please provide a legal question or message so I can assist you.",
       mode: "live",
       fileContext: { acceptedFiles: [], skippedFiles: [] },
-      jurisdiction: { country, state },
       modeReason: ""
     });
   }
@@ -214,7 +210,6 @@ async function chatController(req, res) {
         acceptedFiles: caseData.acceptedFiles,
         skippedFiles: caseData.skippedFiles,
       },
-      jurisdiction: { country, state },
       modeReason,
     });
   } catch (err) {
@@ -251,7 +246,6 @@ async function chatController(req, res) {
         acceptedFiles: caseData.acceptedFiles,
         skippedFiles: caseData.skippedFiles,
       },
-      jurisdiction: { country, state },
     });
   }
 }

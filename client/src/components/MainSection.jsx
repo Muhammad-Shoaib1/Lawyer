@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import ChatBox from "./ChatBox.jsx";
-import SuggestedQuestions from "./SuggestedQuestions.jsx";
+
 import AvatarPanel from "./AvatarPanel.jsx";
 import {
   LiveAvatarSession,
@@ -8,99 +8,9 @@ import {
   AgentEventsEnum,
 } from "@heygen/liveavatar-web-sdk";
 
-const SUGGESTED_QUESTION_BANK = {
-  "Family Law": [
-    "How does child custody usually get decided?",
-    "What are the first steps to file for divorce?",
-    "Can alimony be modified after divorce?",
-    "How can I document issues for a custody case?",
-    "What does legal separation mean in practice?",
-    "How is child support usually calculated?",
-  ],
-  "Criminal Law": [
-    "What should I do immediately after an arrest?",
-    "How does bail work in most jurisdictions?",
-    "What is the difference between a misdemeanor and felony?",
-    "When should I avoid speaking to police?",
-    "What happens at an arraignment hearing?",
-    "Can charges be dropped before trial?",
-  ],
-  "Civil Law": [
-    "What documents help in a civil dispute?",
-    "How do I know if I should file a lawsuit?",
-    "What is the usual timeline for a civil case?",
-    "How are damages calculated in civil matters?",
-    "What is the difference between settlement and trial?",
-    "Can I represent myself in civil court?",
-  ],
-  Immigration: [
-    "What can I do after a visa overstay notice?",
-    "How do I prepare for an immigration interview?",
-    "What evidence helps in an asylum case?",
-    "When should I file for adjustment of status?",
-    "What happens if I miss an immigration hearing?",
-    "How do I track my immigration case status?",
-  ],
-  "Business Law": [
-    "Should I form an LLC or a corporation?",
-    "What clauses are critical in a service contract?",
-    "How can I handle a contract breach?",
-    "What legal basics should a startup cover first?",
-    "How do I protect my business from liability?",
-    "When should a business involve legal counsel?",
-  ],
-  "Employment Law": [
-    "What should I do before reporting workplace harassment?",
-    "How do wrongful termination claims usually work?",
-    "What records should I keep for wage disputes?",
-    "Can an employer change my contract terms suddenly?",
-    "What are common signs of retaliation at work?",
-    "How do I document unpaid overtime issues?",
-  ],
-  "Personal Injury": [
-    "What evidence is most important after an accident?",
-    "How long do I have to file an injury claim?",
-    "Should I speak to the insurance adjuster directly?",
-    "How is pain and suffering usually assessed?",
-    "What medical records should I gather first?",
-    "When should I consider settlement versus court?",
-  ],
-  "Real Estate Law": [
-    "What should I review before signing a lease?",
-    "How do property boundary disputes get handled?",
-    "What are common legal risks in home purchases?",
-    "Can I break a lease early without penalties?",
-    "What should I do if a seller hides defects?",
-    "How can I handle landlord maintenance violations?",
-  ],
-  "Intellectual Property": [
-    "Should I trademark my brand name first?",
-    "What is the difference between copyright and trademark?",
-    "How do I respond to a cease-and-desist letter?",
-    "When should I file a patent application?",
-    "How do I protect app code from copying?",
-    "What steps help enforce IP rights online?",
-  ],
-  "Tax Law": [
-    "What should I do after getting an IRS notice?",
-    "How can I dispute a tax assessment?",
-    "What records should I keep for an audit?",
-    "When is a payment plan usually possible?",
-    "How do penalties and interest typically accrue?",
-    "What are common options for tax debt relief?",
-  ],
-};
 
-function pickRandomQuestions(area, refreshNonce, count = 4) {
-  const pool = SUGGESTED_QUESTION_BANK[area] || SUGGESTED_QUESTION_BANK["Family Law"];
-  const decorated = pool.map((q, idx) => ({
-    q,
-    // refreshNonce ensures a different shuffle across page refreshes.
-    sortKey: Math.sin((refreshNonce + 1) * (idx + 1) * 99991),
-  }));
-  decorated.sort((a, b) => a.sortKey - b.sortKey);
-  return decorated.slice(0, count).map((entry) => entry.q);
-}
+
+
 
 function formatNow() {
   return new Date();
@@ -168,10 +78,7 @@ async function postJson(url, body, { timeoutMs = 20000 } = {}) {
 }
 
 export default function MainSection() {
-  const [country, setCountry] = useState("United States");
-  const [stateRegion, setStateRegion] = useState("California");
-  const [practiceArea, setPracticeArea] = useState("Family Law");
-  const [refreshNonce] = useState(() => Date.now() + Math.floor(Math.random() * 100000));
+
   const [status, setStatus] = useState("ready"); // ready | listening | thinking | speaking
 
   const [sessionId, setSessionId] = useState(null);
@@ -192,10 +99,7 @@ export default function MainSection() {
   const [lastClaudeError, setLastClaudeError] = useState("");
 
   const apiBaseUrl = getApiBaseUrl();
-  const suggested = useMemo(
-    () => pickRandomQuestions(practiceArea, refreshNonce, 4),
-    [practiceArea, refreshNonce]
-  );
+
 
   const speakFallback = useCallback(
     (text) => {
@@ -278,9 +182,7 @@ export default function MainSection() {
         if (normalized.files.length > 0) {
           const form = new FormData();
           form.append("message", question);
-          form.append("practiceArea", practiceArea);
-          form.append("country", country);
-          form.append("state", stateRegion);
+
           for (const file of normalized.files) {
             form.append("caseFiles", file);
           }
@@ -296,15 +198,15 @@ export default function MainSection() {
         } else {
           chatData = await postJson(`${apiBaseUrl}/api/chat`, {
             message: question,
-            practiceArea,
-            country,
-            state: stateRegion,
+
           });
         }
 
         const reply = chatData?.reply;
         if (!reply) throw new Error("Empty Claude reply");
-        const nextMode = chatData?.mode || inferClaudeMode(reply);
+        if (nextMode === "fallback") {
+          console.warn(`[claude] Fallback mode active. ${chatData?.modeReason || ""}`);
+        }
         setClaudeMode(nextMode);
         setLastClaudeError(nextMode === "fallback" ? chatData?.modeReason || "" : "");
 
@@ -351,7 +253,7 @@ export default function MainSection() {
         });
       }
     },
-    [apiBaseUrl, practiceArea, country, stateRegion, sessionId, speakFallback, inferClaudeMode]
+    [apiBaseUrl, sessionId, speakFallback, inferClaudeMode]
   );
 
   const onVoiceStatusChange = (nextStatus) => {
@@ -360,16 +262,10 @@ export default function MainSection() {
     if (nextStatus === "ready") setStatus("ready");
   };
 
-  const handlePickSuggested = async (q) => {
-    // For a demo, suggested questions submit immediately.
-    await handleAsk(q);
-  };
+
 
   const downloadConversation = useCallback(() => {
     const lines = [];
-    lines.push(`Country: ${country}`);
-    lines.push(`State/Region: ${stateRegion}`);
-    lines.push(`Practice Area: ${practiceArea}`);
     lines.push(`Generated: ${new Date().toISOString()}`);
     lines.push("");
     for (const m of messages) {
@@ -385,7 +281,7 @@ export default function MainSection() {
     a.download = `lawyerai-conversation-${Date.now()}.txt`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [messages, country, stateRegion, practiceArea]);
+  }, [messages]);
 
   const startSession = useCallback(async () => {
     setAvatarError("");
@@ -393,7 +289,7 @@ export default function MainSection() {
     try {
       const data = await postJson(
         `${apiBaseUrl}/api/avatar/session`,
-        { practiceArea },
+        {},
         { timeoutMs: 30000 }
       );
 
@@ -455,7 +351,7 @@ export default function MainSection() {
     } finally {
       setIsAvatarLoading(false);
     }
-  }, [apiBaseUrl, practiceArea]);
+  }, [apiBaseUrl]);
 
   const endSession = useCallback(() => {
     try {
@@ -487,54 +383,28 @@ export default function MainSection() {
       <div className="heroCard">
         <div className="heroInner">
           <div className="left">
-            <div className="eyebrow">LawyerAI MERN Demo</div>
             <div
               className="statusBadge"
               style={{
                 display: "inline-flex",
                 marginBottom: 12,
-                borderColor:
-                  claudeMode === "live"
-                    ? "rgba(52,211,153,0.35)"
-                    : claudeMode === "fallback"
-                      ? "rgba(251,191,36,0.35)"
-                      : "rgba(255,255,255,0.16)",
+                borderColor: "rgba(52,211,153,0.35)",
               }}
               aria-live="polite"
             >
               <span
                 className="dot"
                 style={{
-                  background:
-                    claudeMode === "live"
-                      ? "#34d399"
-                      : claudeMode === "fallback"
-                        ? "#f59e0b"
-                        : "rgba(255,255,255,0.5)",
+                  background: "#34d399",
                 }}
               />
-              {claudeMode === "live"
-                ? "Claude Live Mode"
-                : claudeMode === "fallback"
-                  ? "Fallback Mode"
-                  : "Claude Status: Unknown"}
+              Claude Active
             </div>
-            <h1>Speak With Our AI Legal Assistant</h1>
-            <p className="sub">
-              Get instant general legal guidance powered by AI. For case-specific advice,
-              book a consultation.
-            </p>
 
-            <SuggestedQuestions questions={suggested} onPick={handlePickSuggested} />
+
 
             <div className="glass" style={{ padding: 16 }}>
               <ChatBox
-                country={country}
-                stateRegion={stateRegion}
-                onCountryChange={setCountry}
-                onStateRegionChange={setStateRegion}
-                practiceArea={practiceArea}
-                onPracticeAreaChange={(v) => setPracticeArea(v)}
                 messages={messages}
                 onSubmitMessage={handleAsk}
                 isThinking={isThinking}
@@ -544,15 +414,7 @@ export default function MainSection() {
                 chatError={chatError}
                 onDownloadConversation={downloadConversation}
               />
-              <div className="hint" style={{ marginTop: 10 }}>
-                This demo provides general information and does not create an attorney-client relationship.
-              </div>
-              {claudeMode === "fallback" ? (
-                <div className="hint" style={{ marginTop: 8, color: "rgba(251,191,36,0.95)" }}>
-                  Claude is running in fallback mode. Check `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL` in server `.env`.
-                  {lastClaudeError ? ` Last error: ${lastClaudeError}` : ""}
-                </div>
-              ) : null}
+
             </div>
           </div>
 

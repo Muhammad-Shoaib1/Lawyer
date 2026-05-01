@@ -404,3 +404,50 @@ h1 {
   font-size: 13px;
 }
 
+/* Voice Input Button Improvements */
+.btnVoice {
+  background: linear-gradient(135deg, #d9b45a 0%, #f1d58b 100%);
+  color: #041127;
+  border: none;
+  padding: 12px 24px;
+  font-size: 16px;
+  box-shadow: 0 4px 15px rgba(217, 180, 90, 0.3);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.btnVoice:hover:not(:disabled) {
+  transform: scale(1.05) translateY(-2px);
+  box-shadow: 0 8px 25px rgba(217, 180, 90, 0.5);
+}
+
+.btnVoice:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.voiceIcon {
+  font-size: 1.2em;
+}
+
+.statusListening .btnVoice {
+  animation: voicePulse 1.5s infinite;
+  background: linear-gradient(135deg, #ef4444 0%, #f87171 100%);
+  color: white;
+  box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);
+}
+
+@keyframes voicePulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+  }
+}
+
+
