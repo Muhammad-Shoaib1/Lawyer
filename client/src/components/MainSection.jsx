@@ -34,16 +34,15 @@ function getApiBaseUrl() {
 }
 
 function parseAvatarStartError(err) {
-  const raw = String(err?.message || err || "");
-  const lower = raw.toLowerCase();
+  const raw = String(err?.message || err || "").toLowerCase();
 
-  if (lower.includes("insufficient credits")) {
-    return "LiveAvatar credits are insufficient for starting a live session. Please top up credits in your LiveAvatar account.";
+  if (raw.includes("insufficient credits") || raw.includes("no credits") || raw.includes("credit limit")) {
+    return "Your HeyGen/LiveAvatar account has no credits available. Please top up your credits to enable the live avatar.";
   }
-  if (lower.includes("forbidden") || lower.includes("403")) {
-    return "LiveAvatar rejected session start (403). Check API key permissions, avatar access, and account limits.";
+  if (raw.includes("forbidden") || raw.includes("403") || raw.includes("authorized")) {
+    return "LiveAvatar rejected the session (403/Unauthorized). Please check your API key permissions and avatar access.";
   }
-  return "Live avatar session could not start right now. Using speech fallback.";
+  return `Live avatar session failed: ${raw || "Unknown error"}. Using speech fallback.`;
 }
 
 function isBenignAvatarCleanupError(reason) {
