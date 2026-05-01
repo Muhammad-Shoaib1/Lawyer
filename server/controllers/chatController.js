@@ -1,6 +1,6 @@
 const ChatHistory = require("../models/ChatHistory");
 const AnalyticsEvent = require("../models/AnalyticsEvent");
-const { generateClaudeReply, detectUrgentTopic } = require("../utils/claude");
+const { generateClaudeReply, generateClaudeReplyStream, detectUrgentTopic } = require("../utils/claude");
 const pdfParse = require("pdf-parse");
 const mammoth = require("mammoth");
 
