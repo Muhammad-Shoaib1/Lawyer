@@ -92,12 +92,16 @@ async function generateClaudeReply({
 
   for (const model of modelsToTry) {
     try {
+      console.log(`[claude] Attempting model: ${model}`);
+      const start = Date.now();
       response = await anthropic.messages.create({
         model,
-        max_tokens: 320,
+        max_tokens: 300,
         system: systemPrompt,
         messages: [{ role: "user", content: userText }],
       });
+      const duration = Date.now() - start;
+      console.log(`[claude] Success with ${model} in ${duration}ms`);
       cachedWorkingModel = model;
       break;
     } catch (err) {

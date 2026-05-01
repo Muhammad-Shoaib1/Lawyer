@@ -99,6 +99,7 @@ export default function MainSection() {
   const [lastClaudeError, setLastClaudeError] = useState("");
 
   const apiBaseUrl = getApiBaseUrl();
+  console.log("[MainSection] Initialized. API Base URL:", apiBaseUrl);
 
 
   const speakFallback = useCallback(
@@ -155,7 +156,7 @@ export default function MainSection() {
   }, []);
 
   const handleAsk = useCallback(
-    async (messageText) => {
+      console.log("[chat] Handling question:", messageText);
       const normalized =
         typeof messageText === "string"
           ? { text: messageText, files: [] }
@@ -164,7 +165,10 @@ export default function MainSection() {
               files: Array.isArray(messageText?.files) ? messageText.files : [],
             };
       const question = normalized.text.trim();
-      if (!question) return;
+      if (!question) {
+        console.warn("[chat] Empty question, skipping.");
+        return;
+      }
 
       setChatError(null);
       setMessages((prev) => [
@@ -196,14 +200,16 @@ export default function MainSection() {
             throw new Error(chatData?.error || `Request failed with ${res.status}`);
           }
         } else {
+          console.log("[chat] Requesting Claude reply (no files)...");
           chatData = await postJson(`${apiBaseUrl}/api/chat`, {
             message: question,
-
           });
         }
+        console.log("[chat] Received response:", chatData);
 
         const reply = chatData?.reply;
         if (!reply) throw new Error("Empty Claude reply");
+        const nextMode = inferClaudeMode(reply);
         if (nextMode === "fallback") {
           console.warn(`[claude] Fallback mode active. ${chatData?.modeReason || ""}`);
         }
@@ -284,6 +290,7 @@ export default function MainSection() {
   }, [messages]);
 
   const startSession = useCallback(async () => {
+    console.log("[avatar] Starting session...");
     setAvatarError("");
     setIsAvatarLoading(true);
     try {
@@ -323,17 +330,21 @@ export default function MainSection() {
       });
 
       liveSession.on(SessionEvent.SESSION_STREAM_READY, () => {
+        console.log("[avatar] Stream ready.");
         if (videoRef.current) liveSession.attach(videoRef.current);
       });
       liveSession.on(AgentEventsEnum.AVATAR_SPEAK_STARTED, () => {
+        console.log("[avatar] Speaking started.");
         if (speakTimeoutRef.current) clearTimeout(speakTimeoutRef.current);
         setStatus("speaking");
       });
       liveSession.on(AgentEventsEnum.AVATAR_SPEAK_ENDED, () => {
+        console.log("[avatar] Speaking ended.");
         if (speakTimeoutRef.current) clearTimeout(speakTimeoutRef.current);
         setStatus("ready");
       });
       liveSession.on(SessionEvent.SESSION_DISCONNECTED, () => {
+        console.log("[avatar] Disconnected.");
         liveSessionRef.current = null;
         if (speakTimeoutRef.current) clearTimeout(speakTimeoutRef.current);
         setStatus("ready");
@@ -366,6 +377,12 @@ export default function MainSection() {
     setLiveEnabled(false);
     setStatus("ready");
   }, []);
+
+  // Auto-start session on mount
+  React.useEffect(() => {
+    console.log("[MainSection] Auto-starting avatar session...");
+    startSession();
+  }, [startSession]);
 
   // Suppress known harmless SDK cleanup rejections when session start fails.
   React.useEffect(() => {

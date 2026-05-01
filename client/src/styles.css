@@ -404,50 +404,61 @@ h1 {
   font-size: 13px;
 }
 
-/* Voice Input Button Improvements */
+/* Voice Input Button Improvements - Glassmorphism Style */
 .btnVoice {
-  background: linear-gradient(135deg, #d9b45a 0%, #f1d58b 100%);
-  color: #041127;
-  border: none;
-  padding: 12px 24px;
-  font-size: 16px;
-  box-shadow: 0 4px 15px rgba(217, 180, 90, 0.3);
+  background: rgba(217, 180, 90, 0.08);
+  color: var(--gold);
+  border: 1px solid rgba(217, 180, 90, 0.3);
+  padding: 12px 28px;
+  font-size: 15px;
+  border-radius: 16px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  gap: 12px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
 }
 
 .btnVoice:hover:not(:disabled) {
-  transform: scale(1.05) translateY(-2px);
-  box-shadow: 0 8px 25px rgba(217, 180, 90, 0.5);
+  background: rgba(217, 180, 90, 0.15);
+  border-color: var(--gold);
+  color: var(--gold2);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(217, 180, 90, 0.2);
 }
 
 .btnVoice:active:not(:disabled) {
-  transform: scale(0.98);
+  transform: scale(0.97);
 }
 
 .voiceIcon {
-  font-size: 1.2em;
+  font-size: 1.3em;
+  filter: drop-shadow(0 0 5px rgba(217, 180, 90, 0.4));
 }
 
 .statusListening .btnVoice {
-  animation: voicePulse 1.5s infinite;
-  background: linear-gradient(135deg, #ef4444 0%, #f87171 100%);
-  color: white;
-  box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);
+  animation: voiceGlow 2s infinite;
+  background: rgba(239, 68, 68, 0.15);
+  border-color: #ef4444;
+  color: #fca5a5;
 }
 
-@keyframes voicePulse {
+@keyframes voiceGlow {
   0% {
-    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+    transform: scale(1);
   }
-  70% {
-    box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+  50% {
+    box-shadow: 0 0 20px 5px rgba(239, 68, 68, 0.2);
+    transform: scale(1.02);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+    transform: scale(1);
   }
 }
+
 
 

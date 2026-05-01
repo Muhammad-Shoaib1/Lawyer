@@ -120,7 +120,9 @@ function buildAnthropicFailureReply(err) {
 }
 
 async function chatController(req, res) {
+  console.log("[chat] Request received.");
   const { message, practiceArea, country, state } = parseBody(req);
+  console.log("[chat] Parsed body:", { message, practiceArea, country, state });
 
   if (typeof message !== "string" || !message.trim()) {
     return res.json({
@@ -147,6 +149,7 @@ async function chatController(req, res) {
 
   try {
     const apiKey = process.env.ANTHROPIC_API_KEY;
+    console.log("[chat] Using API key:", apiKey ? "PRESENT" : "MISSING");
 
     if (!apiKey) {
       // Keeps the demo runnable without secrets; real deployment uses Claude.
@@ -213,6 +216,7 @@ async function chatController(req, res) {
       modeReason,
     });
   } catch (err) {
+    console.error("[chat] Controller error caught:", err);
     const latencyMs = Date.now() - startTs;
     console.error("[chat] failed:", err);
 

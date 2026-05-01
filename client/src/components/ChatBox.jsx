@@ -93,6 +93,7 @@ export default function ChatBox({
     };
 
     try {
+      console.log("[speech] Starting recognition...");
       recognition.start();
     } catch (e) {
       // start() can throw if called twice quickly
