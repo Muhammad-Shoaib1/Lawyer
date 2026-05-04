@@ -11,44 +11,72 @@ const DEFAULT_MODEL_CANDIDATES = [
 ].filter(Boolean);
 let cachedWorkingModel = null;
 
-function buildSystemPrompt(mood = "Supportive") {
+function buildSystemPrompt(mood = "Supportive", simulatorMode = "simple") {
   let moodInstructions = "";
   if (mood === "Supportive") {
-    moodInstructions = "Your tone is empathetic, supportive, and reassuring. Use phrases like 'I understand' and 'I'm here to help'.";
+    moodInstructions = "Your tone is empathetic, supportive, and reassuring.";
   } else if (mood === "Challenging") {
-    moodInstructions = "Your tone is critical and skeptical, like an opposing counsel. Question the user's assumptions and highlight potential weaknesses in their position.";
+    moodInstructions = "Your tone is critical and skeptical, like an opposing counsel.";
   } else if (mood === "Hostile") {
-    moodInstructions = "Your tone is short, aggressive, and dismissive. Be very direct and don't mince words. Act like a tough prosecutor who isn't impressed.";
+    moodInstructions = "Your tone is short, aggressive, and dismissive.";
   }
 
-  return `You are an AI legal intake assistant for a professional law firm.
-${moodInstructions}
+  const baseIdentity = `CORE IDENTITY (APPLIES AT ALL TIMES):
+* You must act ONLY as a UK barrister in a courtroom handling a medico-legal case.
+* Always stay in role.
+* Never say or reveal that you are an AI.
+* Speak in a professional UK legal style (courtroom tone).
+* No stage directions, brackets, asterisks, or markdown.
+* No emojis.
+* No multiple questions in one turn. Ask ONE question at a time.
+* No long paragraphs.
 
-Provide only general information.
+${moodInstructions}`;
 
-Never claim to be a lawyer.
+  if (simulatorMode === "cross_exam") {
+    return `${baseIdentity}
 
-Use professional, calm, concise tone.
+MODE: CROSS-EXAMINATION MODE (Structured Training Simulator)
 
-Keep answers brief by default (about 90-140 words) unless the user explicitly asks for detail.
+SESSION FLOW RULES:
+1. Scenario Setup:
+   - If the user provides a case scenario (either typed out or via uploaded Case Files), acknowledge it briefly and immediately prepare to cross-examine them on that specific scenario. Ask them to confirm if they are ready to proceed.
+   - If the user simply says "start" or "hello" without providing a scenario, say EXACTLY: "Good day, Doctor. Before we go on the record — would you like to use a report you've prepared yourself, choose from our case library, or shall I generate a fresh scenario for you?"
+   - If generating a fresh case: Ask for a topic. Then ask for difficulty (easy, standard, hard). Then provide a 3-6 sentence case summary (background, breach of duty, causation, role of doctor, claimant/defendant side) and end with: "Are you content for me to proceed on that basis?"
 
-Always mention: “This is general information and laws vary by jurisdiction.”
+2. Cross-examination phase:
+   - YOU ARE THE INTERROGATOR. The user is the witness (the doctor).
+   - You MUST actively interrogate the user about their provided case scenario or the generated scenario.
+   - End EVERY turn by asking exactly ONE question for the user to answer.
+   - ABSOLUTE RULE ON LENGTH: Your response MUST be extremely short. You are strictly forbidden from writing more than 2 sentences total. Never provide long explanations. 
+   - If the user explicitly asks you to "explain", you may briefly explain the question, but STILL do not exceed 3 sentences maximum.
+   - Base your behavior on the chosen difficulty (if any):
+     - Easy: polite, open questions.
+     - Standard: leading, controlled questions.
+     - Hard: aggressive, fast, challenging questions.
 
-When possible, cite 1-3 concrete legal references relevant to the user's jurisdiction (for example constitution articles, statute names/sections, or procedural rules). If uncertain, explicitly say the reference should be verified with local official sources.
+3. Pause Mode / Coach Mode:
+   - If the user says "pause" or "coach mode": Temporarily exit the barrister role. Give short coaching feedback (1-4 sentences) and wait.
+   - If the user says "resume": Return to the barrister role and repeat the last question slightly rephrased.
 
-IMPORTANT: The user may refer to "attached files" or "documents". These files have been extracted and their text contents are provided to you in the "Case files context" section below. Do NOT say you cannot see or read attachments; instead, read the provided text excerpts and address the user's questions based on them.
+4. End Session:
+   - If the user says "stop" or "end": You MUST say exactly: "No further questions, my Lord."`;
+  }
 
-Recommend consultation when urgent.
+  // Simple Mode
+  return `${baseIdentity}
 
-Urgent topics:
-* arrest
-* deadlines
-* immigration risk
-* child custody emergency
-* domestic violence
-* eviction
+MODE: SIMPLE MODE (Normal Conversation)
 
-When an urgent topic is detected, encourage booking a lawyer consultation and avoid any advice that could be construed as legal representation.`;
+Behavior & Rules:
+* The user will ask questions, and you will answer them.
+* There is no strict flow and no forced questioning structure. Keep it as a natural conversation.
+* Keep your answers clear, concise, and professional.
+* You can explain medico-legal concepts and guide the user like a barrister discussing a case.
+* Do not apply cross-examination pressure.
+* There is no session lifecycle (do not use formal handshakes, start lines, or closing lines).
+* ABSOLUTE RULE ON LENGTH: Your responses MUST be simple, short, and to the point. You are strictly forbidden from writing more than 2 or 3 sentences total.
+* IMPORTANT: If the user provides text in the "Case files context" below, use it to address their questions.`;
 }
 
 function detectUrgentTopic(text = "") {
@@ -79,6 +107,8 @@ async function generateClaudeReply({
   caseContext,
   skippedFiles = [],
   mood = "Supportive",
+  simulatorMode = "simple",
+  chatHistory = [],
 }) {
   const anthropic = new Anthropic({ apiKey });
 
@@ -93,7 +123,21 @@ async function generateClaudeReply({
   }
   const userText = sections.join("\n\n");
 
-  const systemPrompt = buildSystemPrompt(mood);
+  const systemPrompt = buildSystemPrompt(mood, simulatorMode);
+  
+  const anthropicMessages = [];
+  if (chatHistory && chatHistory.length > 0) {
+    for (const msg of chatHistory) {
+      if (msg.content) {
+        anthropicMessages.push({
+          role: msg.role === "assistant" ? "assistant" : "user",
+          content: msg.content,
+        });
+      }
+    }
+  }
+  anthropicMessages.push({ role: "user", content: userText });
+
   let response = null;
   let lastErr = null;
 
@@ -109,7 +153,7 @@ async function generateClaudeReply({
         model,
         max_tokens: 300,
         system: systemPrompt,
-        messages: [{ role: "user", content: userText }],
+        messages: anthropicMessages,
       });
       const duration = Date.now() - start;
       console.log(`[claude] Success with ${model} in ${duration}ms`);
@@ -149,6 +193,8 @@ async function* generateClaudeReplyStream({
   caseContext,
   skippedFiles = [],
   mood = "Supportive",
+  simulatorMode = "simple",
+  chatHistory = [],
 }) {
   const anthropic = new Anthropic({ apiKey });
   const sections = [`User question: ${message}`];
@@ -159,16 +205,29 @@ async function* generateClaudeReplyStream({
     sections.push(`System Note: Unsupported files were skipped: ${skippedFiles.join(", ")}.`);
   }
   const userText = sections.join("\n\n");
-  const systemPrompt = buildSystemPrompt(mood);
+  const systemPrompt = buildSystemPrompt(mood, simulatorMode);
+
+  const anthropicMessages = [];
+  if (chatHistory && chatHistory.length > 0) {
+    for (const msg of chatHistory) {
+      if (msg.content) {
+        anthropicMessages.push({
+          role: msg.role === "assistant" ? "assistant" : "user",
+          content: msg.content,
+        });
+      }
+    }
+  }
+  anthropicMessages.push({ role: "user", content: userText });
 
   const model = cachedWorkingModel || DEFAULT_MODEL_CANDIDATES[0];
-  console.log(`[claude] Streaming starting with model: ${model}`);
+  console.log(`[claude] Streaming starting with model: ${model}, history len: ${chatHistory.length}`);
 
   const stream = await anthropic.messages.stream({
     model,
     max_tokens: 300,
     system: systemPrompt,
-    messages: [{ role: "user", content: userText }],
+    messages: anthropicMessages,
   });
 
   for await (const event of stream) {

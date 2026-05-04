@@ -24,7 +24,18 @@ function parseBody(req) {
   const raw = req.body || {};
   const message = normalizeString(raw.message || raw.text || raw.q);
   const mood = raw.mood || "Supportive";
-  return { message, mood, practiceArea: "General", country: "United States", state: "General" };
+  const simulatorMode = raw.simulatorMode || "simple";
+  
+  let chatHistory = [];
+  if (raw.chatHistory) {
+    if (typeof raw.chatHistory === "string") {
+      try { chatHistory = JSON.parse(raw.chatHistory); } catch (e) {}
+    } else if (Array.isArray(raw.chatHistory)) {
+      chatHistory = raw.chatHistory;
+    }
+  }
+
+  return { message, mood, simulatorMode, chatHistory, practiceArea: "General", country: "United States", state: "General" };
 }
 
 async function buildCaseContext(files = []) {
@@ -122,8 +133,8 @@ function buildAnthropicFailureReply(err) {
 
 async function chatController(req, res) {
   console.log("[chat] Request received.");
-  const { message, practiceArea, country, state } = parseBody(req);
-  console.log("[chat] Parsed body:", { message, practiceArea, country, state });
+  const { message, practiceArea, country, state, simulatorMode, chatHistory } = parseBody(req);
+  console.log("[chat] Parsed body:", { message, practiceArea, country, state, simulatorMode, historyLen: chatHistory.length });
 
   if (typeof message !== "string" || !message.trim()) {
     return res.json({
@@ -167,6 +178,8 @@ async function chatController(req, res) {
         state,
         caseContext: caseData.context,
         skippedFiles: caseData.skippedFiles,
+        simulatorMode,
+        chatHistory,
       });
       reply = result.reply;
       urgentTopic = result.urgentTopic;
@@ -256,8 +269,8 @@ async function chatController(req, res) {
 }
 
 async function chatStreamController(req, res) {
-  console.log("[chat-stream] Controller hit. Mood:", req.body?.mood);
-  const { message, mood } = parseBody(req);
+  console.log("[chat-stream] Controller hit. Mood:", req.body?.mood, "SimulatorMode:", req.body?.simulatorMode);
+  const { message, mood, simulatorMode, chatHistory } = parseBody(req);
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey) {
@@ -281,6 +294,8 @@ async function chatStreamController(req, res) {
       apiKey,
       message,
       mood,
+      simulatorMode,
+      chatHistory,
       caseContext: caseData.context,
       skippedFiles: caseData.skippedFiles,
     });

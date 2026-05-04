@@ -102,6 +102,7 @@ export default function MainSection() {
   const [claudeMode, setClaudeMode] = useState("fallback"); // unknown | live | fallback
   const [lastClaudeError, setLastClaudeError] = useState("");
   const [mood, setMood] = useState("Supportive"); // Supportive | Challenging | Hostile
+  const [simulatorMode, setSimulatorMode] = useState("simple"); // simple | cross_exam
 
   const apiBaseUrl = getApiBaseUrl();
   console.log("[MainSection] Initialized. API Base URL:", apiBaseUrl);
@@ -219,12 +220,15 @@ export default function MainSection() {
 
       try {
         console.log(`[chat] Requesting Claude stream (Mood: ${mood})...`);
+        const historyToSend = messages.map(m => ({ role: m.role, content: m.text })).filter(m => m.content);
         let res;
-        const body = { message: question, mood };
+        const body = { message: question, mood, simulatorMode, chatHistory: historyToSend };
         if (normalized.files.length > 0) {
           const form = new FormData();
           form.append("message", question);
           form.append("mood", mood);
+          form.append("simulatorMode", simulatorMode);
+          form.append("chatHistory", JSON.stringify(historyToSend));
           for (const file of normalized.files) {
             form.append("caseFiles", file);
           }
@@ -490,6 +494,29 @@ export default function MainSection() {
                 }}
               />
               Claude Active
+            </div>
+
+            <div className="simulatorModeSelector" style={{ marginBottom: 16, display: "flex", gap: 8 }}>
+              {[{ id: "simple", label: "Simple Mode" }, { id: "cross_exam", label: "Cross-Examination Mode" }].map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => setSimulatorMode(m.id)}
+                  className={`modeBtn ${simulatorMode === m.id ? "active" : ""}`}
+                  style={{
+                    background: simulatorMode === m.id ? "rgba(52,211,153,0.25)" : "rgba(255,255,255,0.05)",
+                    color: simulatorMode === m.id ? "#34d399" : "rgba(255,255,255,0.6)",
+                    border: `1px solid ${simulatorMode === m.id ? "#34d399" : "rgba(255,255,255,0.1)"}`,
+                    padding: "8px 16px",
+                    borderRadius: "10px",
+                    fontSize: "14px",
+                    fontWeight: "bold",
+                    cursor: "pointer",
+                    transition: "all 0.3s ease"
+                  }}
+                >
+                  {m.label}
+                </button>
+              ))}
             </div>
 
             <div className="moodSelector" style={{ marginBottom: 16, display: "flex", gap: 8 }}>
