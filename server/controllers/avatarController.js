@@ -71,18 +71,20 @@ async function createSession(req, res) {
     // return a mock sessionId so the frontend can still do browser fallback speech.
     const mockSessionId = `mock-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 
-    try {
-      await AnalyticsEvent.create({
-        practiceArea: area,
-        route: "/api/avatar/session",
-        eventType: "avatar_session_create",
-        success: false,
-        error: err?.message || "unknown error",
-        sessionId: mockSessionId,
-        meta: { latencyMs },
-      });
-    } catch {
-      // ignore db failures
+    if (mongoose.connection.readyState === 1) {
+      try {
+        await AnalyticsEvent.create({
+          practiceArea: area,
+          route: "/api/avatar/session",
+          eventType: "avatar_session_create",
+          success: false,
+          error: err?.message || "unknown error",
+          sessionId: mockSessionId,
+          meta: { latencyMs },
+        });
+      } catch {
+        // ignore db failures
+      }
     }
 
     if (mongoose.connection.readyState === 1) {
@@ -124,18 +126,20 @@ async function speak(req, res) {
 
   // Speaking is now controlled client-side via the official LiveAvatar web SDK
   // (LiveKit WebRTC with lip-sync). We keep this endpoint for compatibility.
-  try {
-    await AnalyticsEvent.create({
-      practiceArea: area,
-      route: "/api/avatar/speak",
-      eventType: "avatar_speak_compat",
-      success: false,
-      error: "Client-side speaking via LiveAvatar SDK",
-      sessionId,
-      meta: { latencyMs: Date.now() - startTs },
-    });
-  } catch {
-    // ignore db failures
+  if (mongoose.connection.readyState === 1) {
+    try {
+      await AnalyticsEvent.create({
+        practiceArea: area,
+        route: "/api/avatar/speak",
+        eventType: "avatar_speak_compat",
+        success: false,
+        error: "Client-side speaking via LiveAvatar SDK",
+        sessionId,
+        meta: { latencyMs: Date.now() - startTs },
+      });
+    } catch {
+      // ignore db failures
+    }
   }
 
   return res.json({

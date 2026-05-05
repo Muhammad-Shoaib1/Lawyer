@@ -21,12 +21,20 @@ export default function ChatBox({
   status,
   chatError,
   onDownloadConversation,
+  promptMode = "default",
+  crossExamActive = false,
 }) {
   const [draft, setDraft] = useState("");
   const [caseFiles, setCaseFiles] = useState([]);
   const [isSpeechSupported, setIsSpeechSupported] = useState(true);
+  const [isRecording, setIsRecording] = useState(false);
+  const isCrossExamMode = promptMode === "medico_cross_exam" && crossExamActive;
   const recognitionRef = useRef(null);
   const lastInterimRef = useRef("");
+  const lastAutoSubmitAtRef = useRef(0);
+  const autoListenEnabledRef = useRef(true);
+  const speechBufferRef = useRef("");
+  const autoSubmitTimerRef = useRef(null);
 
   const SpeechRecognition =
     typeof window !== "undefined"
@@ -40,24 +48,46 @@ export default function ChatBox({
   const startRecognition = () => {
     if (!SpeechRecognition) return;
     if (isThinking) return;
+    if (isRecording) return;
 
     const recognition = new SpeechRecognition();
     recognitionRef.current = recognition;
-    recognition.lang = "en-US";
+    recognition.lang = "en-GB";
     recognition.interimResults = true;
-    recognition.continuous = false;
+    recognition.continuous = true;
+    recognition.maxAlternatives = 3;
 
     recognition.onstart = () => {
+      setIsRecording(true);
       onVoiceStatusChange?.("listening");
     };
 
     recognition.onerror = (event) => {
       console.warn("[speech] error:", event);
+      setIsRecording(false);
       onVoiceStatusChange?.("ready");
     };
 
     recognition.onend = () => {
+      setIsRecording(false);
       onVoiceStatusChange?.("ready");
+    };
+
+    const scheduleCrossExamSubmit = () => {
+      if (!isCrossExamMode) return;
+      if (autoSubmitTimerRef.current) clearTimeout(autoSubmitTimerRef.current);
+      // Give non-native speakers a short pause window before sending.
+      autoSubmitTimerRef.current = setTimeout(() => {
+        const combined = speechBufferRef.current.trim();
+        if (!combined) return;
+        const now = Date.now();
+        if (now - lastAutoSubmitAtRef.current < 1200) return;
+        lastAutoSubmitAtRef.current = now;
+        speechBufferRef.current = "";
+        setDraft(combined);
+        onVoiceStatusChange?.("ready");
+        onSubmitMessage?.(combined);
+      }, 1200);
     };
 
     recognition.onresult = (event) => {
@@ -77,18 +107,33 @@ export default function ChatBox({
       }
 
       if (finalText.trim()) {
-        const cleaned = finalText.trim().replace(/\s+/g, " ");
-        setDraft(cleaned);
+        const cleaned = finalText
+          .trim()
+          .replace(/\s+/g, " ")
+          .replace(/\b(uh|um|erm)\b/gi, "")
+          .replace(/\s{2,}/g, " ")
+          .trim();
+        if (isCrossExamMode) {
+          speechBufferRef.current = `${speechBufferRef.current} ${cleaned}`.trim();
+          setDraft(speechBufferRef.current);
+          scheduleCrossExamSubmit();
+        } else {
+          setDraft((prev) => `${prev ? `${prev} ` : ""}${cleaned}`.trim());
+        }
         onBargeInDetected?.(cleaned);
-        onVoiceStatusChange?.("ready");
-        onSubmitMessage?.(cleaned);
       } else if (interim.trim()) {
         if (status === "speaking") onBargeInDetected?.(interim.trim());
-        setDraft((prev) => {
-          // Avoid fighting the user while they type.
-          if (prev && prev !== lastInterimRef.current) return prev;
-          return interim.trim();
-        });
+        if (isCrossExamMode) {
+          const buffered = speechBufferRef.current.trim();
+          setDraft(`${buffered}${buffered ? " " : ""}${interim.trim()}`.trim());
+          scheduleCrossExamSubmit();
+        } else {
+          setDraft((prev) => {
+            // Avoid fighting the user while they type.
+            if (prev && prev !== lastInterimRef.current) return prev;
+            return interim.trim();
+          });
+        }
       }
     };
 
@@ -101,6 +146,48 @@ export default function ChatBox({
       onVoiceStatusChange?.("ready");
     }
   };
+
+  const stopRecognition = () => {
+    const recognition = recognitionRef.current;
+    if (!recognition) return;
+    if (autoSubmitTimerRef.current) {
+      clearTimeout(autoSubmitTimerRef.current);
+      autoSubmitTimerRef.current = null;
+    }
+    try {
+      recognition.stop();
+    } catch (e) {
+      console.warn("[speech] stop failed:", e);
+    }
+  };
+
+  useEffect(() => {
+    autoListenEnabledRef.current = isCrossExamMode;
+  }, [isCrossExamMode]);
+
+  useEffect(() => {
+    if (!isCrossExamMode) return;
+    if (!isSpeechSupported) return;
+    if (!autoListenEnabledRef.current) return;
+    if (isThinking) return;
+    if (isRecording) return;
+    startRecognition();
+  }, [isCrossExamMode, isSpeechSupported, isThinking, isRecording]);
+
+  useEffect(() => {
+    return () => {
+      if (autoSubmitTimerRef.current) {
+        clearTimeout(autoSubmitTimerRef.current);
+        autoSubmitTimerRef.current = null;
+      }
+      try {
+        recognitionRef.current?.stop?.();
+      } catch {
+        // ignore cleanup failures
+      }
+      recognitionRef.current = null;
+    };
+  }, []);
 
   const canSend = useMemo(() => {
     return !isThinking && draft.trim().length > 0;
@@ -179,13 +266,25 @@ export default function ChatBox({
           className="btn btnVoice"
           type="button"
           disabled={!isSpeechSupported || isThinking}
-          onClick={startRecognition}
+          onClick={() => {
+            if (isCrossExamMode) {
+              autoListenEnabledRef.current = !autoListenEnabledRef.current;
+            }
+            if (isRecording) stopRecognition();
+            else startRecognition();
+          }}
         >
           <span className="voiceIcon">🎤</span>
-          {status === "listening" ? "Listening..." : "Voice Input"}
+          {isCrossExamMode
+            ? (isRecording ? "Listening (Cross-Exam)" : "Start Listening")
+            : (isRecording ? "Stop Recording" : "Record Voice")}
         </button>
         <div className="statusText">
-          {isSpeechSupported ? "Tip: press Ctrl/⌘ + Enter to send" : "Voice input not supported in this browser."}
+          {isSpeechSupported
+            ? (isCrossExamMode
+              ? "Hands-free mode: speak to interrupt and your answer is sent automatically."
+              : "Voice text is added to the input. Press Send when ready.")
+            : "Voice input not supported in this browser."}
         </div>
       </div>
 

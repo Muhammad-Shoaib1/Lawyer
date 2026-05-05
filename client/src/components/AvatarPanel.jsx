@@ -14,6 +14,7 @@ export default function AvatarPanel({
   onStopSpeaking,
   isAvatarLoading,
   avatarError,
+  isReportGenerating,
 }) {
   useEffect(() => {
     if (videoRef?.current) videoRef.current.muted = !!muted;
@@ -101,10 +102,10 @@ export default function AvatarPanel({
           <button
             className="btn"
             type="button"
-            disabled={!sessionId}
+            disabled={!sessionId || isReportGenerating}
             onClick={onEndSession}
           >
-            End Session
+            {isReportGenerating ? "Generating Report..." : "End Session"}
           </button>
           {status === "speaking" && (
             <button

@@ -91,6 +91,8 @@ export default function MainSection() {
   const videoRef = useRef(null);
   const liveSessionRef = useRef(null);
   const speakTimeoutRef = useRef(null);
+  const activeRequestRef = useRef(0);
+  const activeReaderRef = useRef(null);
   const [liveEnabled, setLiveEnabled] = useState(false);
 
   const [isAvatarLoading, setIsAvatarLoading] = useState(false);
@@ -99,9 +101,17 @@ export default function MainSection() {
   const [messages, setMessages] = useState([]);
   const [isThinking, setIsThinking] = useState(false);
   const [chatError, setChatError] = useState(null);
+  const [isReportGenerating, setIsReportGenerating] = useState(false);
   const [claudeMode, setClaudeMode] = useState("fallback"); // unknown | live | fallback
   const [lastClaudeError, setLastClaudeError] = useState("");
   const [mood, setMood] = useState("Supportive"); // Supportive | Challenging | Hostile
+    const [promptMode, setPromptMode] = useState("default"); // default | medico_cross_exam
+  const [showCaseSetup, setShowCaseSetup] = useState(false);
+  const [caseReady, setCaseReady] = useState(false);
+  const [caseFiles, setCaseFiles] = useState([]);
+  const [caseUserName, setCaseUserName] = useState("");
+  const [caseUserTitle, setCaseUserTitle] = useState("Client");
+  const [caseInterviewerRole, setCaseInterviewerRole] = useState("Lead Counsel");
 
   const apiBaseUrl = getApiBaseUrl();
   console.log("[MainSection] Initialized. API Base URL:", apiBaseUrl);
@@ -165,10 +175,11 @@ export default function MainSection() {
       console.log("[chat] Handling question:", messageText);
       const normalized =
         typeof messageText === "string"
-          ? { text: messageText, files: [] }
+          ? { text: messageText, files: [], internal: false }
           : {
               text: String(messageText?.text || ""),
               files: Array.isArray(messageText?.files) ? messageText.files : [],
+              internal: !!messageText?.internal,
             };
       const question = normalized.text.trim();
       if (!question) {
@@ -177,19 +188,30 @@ export default function MainSection() {
       }
 
       setChatError(null);
-      setMessages((prev) => [
-        ...prev,
-        { role: "user", text: question, at: formatNow() },
-      ]);
+            const requestFiles =
+        normalized.files.length > 0
+          ? normalized.files
+          : (promptMode === "medico_cross_exam" ? caseFiles : []);
+      if (!normalized.internal) {
+        setMessages((prev) => [
+          ...prev,
+          { role: "user", text: question, at: formatNow() },
+        ]);
+      }
 
       setIsThinking(true);
       setStatus("thinking");
+      activeRequestRef.current += 1;
+      const requestId = activeRequestRef.current;
+      try {
+        activeReaderRef.current?.cancel?.();
+      } catch {
+        // best effort cancellation
+      }
+      activeReaderRef.current = null;
 
-      setIsThinking(true);
-      setStatus("thinking");
-
-      // Perfectly Real-Time: Immediate filler speech based on mood
-      if (sessionId && liveSessionRef.current) {
+      // Keep filler only for default mode; barrister simulator should stay in-role only.
+      if (promptMode === "default" && sessionId && liveSessionRef.current) {
         const fillers = {
           Supportive: [
             "I understand. Let me look into that for you right away...",
@@ -218,14 +240,33 @@ export default function MainSection() {
       }
 
       try {
-        console.log(`[chat] Requesting Claude stream (Mood: ${mood})...`);
+        console.log(`[chat] Requesting Claude stream (Mood: ${mood}, PromptMode: ${promptMode})...`);
         let res;
-        const body = { message: question, mood };
-        if (normalized.files.length > 0) {
+        const historyForRequest = messages
+          .slice(-20)
+          .map((m) => ({
+            role: m.role === "assistant" ? "assistant" : "user",
+            text: String(m.text || ""),
+          }));
+        const body = {
+          message: question,
+          mood,
+                    promptMode,
+          history: historyForRequest,
+          witnessName: caseUserName,
+          witnessTitle: caseUserTitle,
+          interviewerRole: caseInterviewerRole,
+        };
+        if (requestFiles.length > 0) {
           const form = new FormData();
           form.append("message", question);
           form.append("mood", mood);
-          for (const file of normalized.files) {
+          form.append("promptMode", promptMode);
+                    form.append("history", JSON.stringify(historyForRequest));
+          form.append("witnessName", caseUserName);
+          form.append("witnessTitle", caseUserTitle);
+          form.append("interviewerRole", caseInterviewerRole);
+          for (const file of requestFiles) {
             form.append("caseFiles", file);
           }
           res = await fetch(`${apiBaseUrl}/api/chat-stream`, {
@@ -247,7 +288,18 @@ export default function MainSection() {
           throw new Error(`Stream request failed: ${res.status} - ${errorText}`);
         }
 
+        const contentType = (res.headers.get("Content-Type") || "").toLowerCase();
+        if (contentType.includes("application/json")) {
+          const data = await res.json().catch(() => ({}));
+          const jsonReply = String(data?.reply || "");
+          setMessages((prev) => [...prev, { role: "assistant", text: jsonReply || "No response received.", at: formatNow() }]);
+          setIsThinking(false);
+          setStatus("ready");
+          return;
+        }
+
         const reader = res.body.getReader();
+        activeReaderRef.current = reader;
         const decoder = new TextDecoder();
         let fullReply = "";
         let buffer = "";
@@ -286,6 +338,7 @@ export default function MainSection() {
                 fullReply += data.text;
                 // Update the last message in state
                 setMessages((prev) => {
+                  if (requestId !== activeRequestRef.current) return prev;
                   const next = [...prev];
                   const lastIdx = next.length - 1;
                   if (next[lastIdx] && next[lastIdx].role === "assistant") {
@@ -301,6 +354,7 @@ export default function MainSection() {
         }
 
         console.log("[chat] Stream fully completed. Final length:", fullReply.length);
+        if (requestId !== activeRequestRef.current) return;
         setIsThinking(false);
 
         // Speak via LiveAvatar when available
@@ -322,6 +376,7 @@ export default function MainSection() {
           setStatus("ready");
         }
       } catch (err) {
+        if (requestId !== activeRequestRef.current) return;
         console.error("[chat] Stream error:", err);
         setLastClaudeError(err?.message || "Streaming error");
         setIsThinking(false);
@@ -333,13 +388,40 @@ export default function MainSection() {
         });
       }
     },
-    [apiBaseUrl, sessionId, speakFallback, inferClaudeMode]
+    [
+      apiBaseUrl,
+      messages,
+      mood,
+      promptMode,
+            caseFiles,
+      caseUserName,
+      caseUserTitle,
+      caseInterviewerRole,
+      sessionId,
+      speakFallback,
+      inferClaudeMode,
+    ]
+  );
+
+  const switchPromptMode = useCallback(
+    (nextMode) => {
+      if (nextMode === promptMode) return;
+      setPromptMode(nextMode);
+            if (nextMode === "medico_cross_exam") {
+        setCaseReady(false);
+        setMessages([]);
+        setShowCaseSetup(true);
+      } else {
+        setShowCaseSetup(false);
+      }
+    },
+    [promptMode]
   );
 
   const onVoiceStatusChange = (nextStatus) => {
     // ChatBox calls this with 'listening'/'ready'
-    if (nextStatus === "listening") setStatus("listening");
-    if (nextStatus === "ready") setStatus("ready");
+    if (nextStatus === "listening" && !isThinking && status !== "speaking") setStatus("listening");
+    if (nextStatus === "ready" && !isThinking && status !== "speaking") setStatus("ready");
   };
 
 
@@ -362,6 +444,64 @@ export default function MainSection() {
     a.click();
     URL.revokeObjectURL(url);
   }, [messages]);
+
+  const buildSessionTranscript = useCallback((items) => {
+    const lines = [];
+        for (const m of items) {
+      const speaker = m.role === "user" ? "User" : "Counsel";
+      lines.push(`${speaker}: ${String(m.text || "").trim()}`);
+    }
+    return lines.join("\n");
+  }, []);
+
+  const inferTopicFromMessages = useCallback((items) => {
+        const firstUser = items.find((m) => m.role === "user" && String(m.text || "").trim());
+    if (!firstUser) return "Legal advisory session";
+    const raw = String(firstUser.text).replace(/\s+/g, " ").trim();
+    return raw.length > 90 ? `${raw.slice(0, 87)}...` : raw;
+  }, []);
+
+  const generateEndSessionReport = useCallback(
+    async (snapshotMessages) => {
+      if (!snapshotMessages.length) return;
+      const transcript = buildSessionTranscript(snapshotMessages);
+      if (!transcript) return;
+
+      setIsReportGenerating(true);
+      try {
+        const res = await fetch(`${apiBaseUrl}/api/end-session-report`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            topic: inferTopicFromMessages(snapshotMessages),
+            transcript,
+                        difficulty: mood,
+            sideCounsel: "Lead Counsel",
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data?.error || `Report generation failed (${res.status})`);
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `end-of-session-report-${Date.now()}.pdf`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        console.error("[report] failed:", err);
+        setChatError({
+          message: err?.message || "Failed to generate end-of-session report.",
+          canRetry: false,
+        });
+      } finally {
+        setIsReportGenerating(false);
+      }
+    },
+    [apiBaseUrl, buildSessionTranscript, inferTopicFromMessages, mood]
+  );
 
   const startSession = useCallback(async () => {
     console.log("[avatar] Starting session...");
@@ -438,7 +578,8 @@ export default function MainSection() {
     }
   }, [apiBaseUrl]);
 
-  const endSession = useCallback(() => {
+  const endSession = useCallback(async () => {
+    const snapshotMessages = [...messages];
     try {
       liveSessionRef.current?.stop?.();
     } catch {
@@ -450,7 +591,8 @@ export default function MainSection() {
     setSessionId(null);
     setLiveEnabled(false);
     setStatus("ready");
-  }, []);
+    await generateEndSessionReport(snapshotMessages);
+  }, [generateEndSessionReport, messages]);
 
   // Auto-start session on mount
   React.useEffect(() => {
@@ -468,6 +610,62 @@ export default function MainSection() {
     window.addEventListener("unhandledrejection", onUnhandledRejection);
     return () => window.removeEventListener("unhandledrejection", onUnhandledRejection);
   }, []);
+
+    React.useEffect(() => {
+    if (promptMode !== "medico_cross_exam") return;
+    if (!caseReady) return;
+    if (messages.length > 0) return;
+    if (isThinking) return;
+    const contextFilesText = caseFiles.length
+      ? caseFiles.map((f) => f.name).join(", ")
+      : "none";
+    handleAsk({
+      text:
+        `LITIGATION_SETUP:\n` +
+        `User name: ${caseUserName}\n` +
+        `User title/role: ${caseUserTitle}\n` +
+        `Counsel side/role: ${caseInterviewerRole}\n` +
+        `Context files provided: ${contextFilesText}\n\n` +
+        `Use this setup as the agreed case context and provide your opening investigative question or advisory summary now.`,
+      internal: true,
+      files: caseFiles,
+    });
+  }, [
+    promptMode,
+    caseReady,
+    caseFiles,
+    caseUserName,
+    caseUserTitle,
+    caseInterviewerRole,
+    messages.length,
+    isThinking,
+    handleAsk,
+  ]);
+
+  React.useEffect(() => {
+    return () => {
+      try {
+        activeReaderRef.current?.cancel?.();
+      } catch {
+        // ignore cleanup failures
+      }
+    };
+  }, []);
+
+    const submitCaseSetup = useCallback(() => {
+    const cleanName = String(caseUserName || "").trim();
+    if (!cleanName) {
+      setChatError({ message: "Please provide a name or role for the session.", canRetry: false });
+      return;
+    }
+    if (!caseFiles.length) {
+      setChatError({ message: "Please upload at least one context file (.txt, .pdf, .docx).", canRetry: false });
+      return;
+    }
+    setChatError(null);
+    setShowCaseSetup(false);
+    setCaseReady(true);
+  }, [caseUserName, caseFiles]);
 
   return (
     <div className="heroWrap">
@@ -490,6 +688,31 @@ export default function MainSection() {
                 }}
               />
               Claude Active
+            </div>
+
+                        <div className="moodSelector" style={{ marginBottom: 16, display: "flex", gap: 8 }}>
+              {[
+                { id: "default", label: "General Advisory" },
+                { id: "medico_cross_exam", label: "Advanced Litigation" },
+              ].map((modeItem) => (
+                <button
+                  key={modeItem.id}
+                  onClick={() => switchPromptMode(modeItem.id)}
+                  className={`moodBtn ${promptMode === modeItem.id ? "active" : ""}`}
+                  style={{
+                    background: promptMode === modeItem.id ? "rgba(52,211,153,0.2)" : "rgba(255,255,255,0.05)",
+                    color: promptMode === modeItem.id ? "#34d399" : "rgba(255,255,255,0.6)",
+                    border: `1px solid ${promptMode === modeItem.id ? "rgba(52,211,153,0.8)" : "rgba(255,255,255,0.1)"}`,
+                    padding: "6px 12px",
+                    borderRadius: "10px",
+                    fontSize: "13px",
+                    cursor: "pointer",
+                    transition: "all 0.3s ease",
+                  }}
+                >
+                  {modeItem.label}
+                </button>
+              ))}
             </div>
 
             <div className="moodSelector" style={{ marginBottom: 16, display: "flex", gap: 8 }}>
@@ -523,7 +746,9 @@ export default function MainSection() {
                 onBargeInDetected={stopSpeakingNow}
                 status={status}
                 chatError={chatError}
-                onDownloadConversation={downloadConversation}
+                                onDownloadConversation={downloadConversation}
+                promptMode={promptMode}
+                crossExamActive={caseReady}
               />
 
             </div>
@@ -543,13 +768,92 @@ export default function MainSection() {
               onToggleMute={() => setMuted((m) => !m)}
               onEndSession={endSession}
               onStopSpeaking={stopSpeakingNow}
+              isReportGenerating={isReportGenerating}
             />
             <div className="hint" style={{ marginTop: 14, lineHeight: 1.65 }}>
               Claude generates the reply. LiveAvatar (or a browser fallback) speaks the exact same text with speaking controls.
             </div>
           </div>
-        </div>
+                </div>
       </div>
+      {showCaseSetup ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.65)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+          }}
+        >
+          <div className="glass" style={{ width: "min(560px, 92vw)", padding: 18 }}>
+            <div style={{ fontWeight: 800, marginBottom: 10 }}>Advanced Litigation Setup</div>
+            <div className="statusText" style={{ marginBottom: 10 }}>
+              Upload case files and set session details before starting.
+            </div>
+            <div style={{ display: "grid", gap: 10 }}>
+              <input
+                className="input"
+                placeholder="Full Name / Role (required)"
+                value={caseUserName}
+                onChange={(e) => setCaseUserName(e.target.value)}
+              />
+              <input
+                className="input"
+                placeholder="Title / Party (e.g. Claimant, Defendant)"
+                value={caseUserTitle}
+                onChange={(e) => setCaseUserTitle(e.target.value)}
+              />
+              <input
+                className="input"
+                placeholder="Counsel Role / Side (e.g. Lead Counsel)"
+                value={caseInterviewerRole}
+                onChange={(e) => setCaseInterviewerRole(e.target.value)}
+              />
+
+              <div style={{ marginTop: 6 }}>
+                <div style={{ fontSize: "12px", opacity: 0.7, marginBottom: 6 }}>
+                  Case Context Files (.txt, .pdf, .docx):
+                </div>
+                <input
+                  type="file"
+                  multiple
+                  accept=".txt,.pdf,.docx"
+                  onChange={(e) => setCaseFiles(Array.from(e.target.files))}
+                  style={{ fontSize: "12px" }}
+                />
+              </div>
+
+              <button
+                className="moodBtn"
+                style={{
+                  marginTop: 10,
+                  background: "var(--gold)",
+                  color: "#000",
+                  fontWeight: 600,
+                  padding: "10px",
+                }}
+                onClick={submitCaseSetup}
+              >
+                Start Session
+              </button>
+              <button
+                className="moodBtn"
+                style={{
+                  background: "rgba(255,255,255,0.1)",
+                  color: "#fff",
+                  padding: "8px",
+                }}
+                onClick={() => setShowCaseSetup(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

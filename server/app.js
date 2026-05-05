@@ -9,9 +9,24 @@ const { notFoundHandler } = require("./middleware/errorHandler");
 
 const app = express();
 
+function parseAllowedOrigins() {
+  const fromEnv = String(process.env.CORS_ORIGINS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const defaults = ["https://project-zyhhm.vercel.app", "http://localhost:5173"];
+  return new Set([...defaults, ...fromEnv]);
+}
+
+const allowedOrigins = parseAllowedOrigins();
+
 app.use(helmet());
 app.use(cors({
-  origin: ["https://project-zyhhm.vercel.app", "http://localhost:5173"],
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.has(origin)) return cb(null, true);
+    return cb(new Error("CORS origin not allowed"), false);
+  },
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   credentials: true
 }));

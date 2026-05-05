@@ -1,8 +1,14 @@
 const ChatHistory = require("../models/ChatHistory");
 const AnalyticsEvent = require("../models/AnalyticsEvent");
-const { generateClaudeReply, generateClaudeReplyStream, detectUrgentTopic } = require("../utils/claude");
+const {
+  generateClaudeReply,
+  generateClaudeReplyStream,
+  generateEndSessionReport,
+  detectUrgentTopic,
+} = require("../utils/claude");
 const pdfParse = require("pdf-parse");
 const mammoth = require("mammoth");
+const PDFDocument = require("pdfkit");
 
 const MAX_CASE_CONTEXT_CHARS = 7000;
 const ALLOWED_TEXT_EXTENSIONS = new Set([
@@ -24,7 +30,29 @@ function parseBody(req) {
   const raw = req.body || {};
   const message = normalizeString(raw.message || raw.text || raw.q);
   const mood = raw.mood || "Supportive";
-  return { message, mood, practiceArea: "General", country: "United States", state: "General" };
+  const promptMode = normalizeString(raw.promptMode || "default");
+  const witnessName = normalizeString(raw.witnessName || "");
+  const witnessTitle = normalizeString(raw.witnessTitle || "");
+  const interviewerRole = normalizeString(raw.interviewerRole || "");
+  let history = [];
+  try {
+    if (Array.isArray(raw.history)) history = raw.history;
+    else if (typeof raw.history === "string" && raw.history.trim()) history = JSON.parse(raw.history);
+  } catch {
+    history = [];
+  }
+  return {
+    message,
+    mood,
+    promptMode,
+    witnessName,
+    witnessTitle,
+    interviewerRole,
+    history,
+    practiceArea: "General",
+    country: "United States",
+    state: "General",
+  };
 }
 
 async function buildCaseContext(files = []) {
@@ -120,10 +148,56 @@ function buildAnthropicFailureReply(err) {
   return null;
 }
 
+function toLineText(value) {
+  return String(value || "")
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.trimEnd());
+}
+
+function markdownToPlainText(markdown = "") {
+  return String(markdown || "")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^\s*[-*+]\s+/gm, "• ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1");
+}
+
+function createPdfBufferFromText({ title, text }) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: "A4", margin: 56 });
+    const buffers = [];
+    doc.on("data", (chunk) => buffers.push(chunk));
+    doc.on("end", () => resolve(Buffer.concat(buffers)));
+    doc.on("error", reject);
+
+    doc.font("Helvetica-Bold").fontSize(14).text(String(title || "End-of-session report"), {
+      align: "left",
+    });
+    doc.moveDown(0.6);
+    doc.font("Helvetica").fontSize(11);
+
+    const lines = toLineText(text);
+    for (const line of lines) {
+      if (!line) {
+        doc.moveDown(0.5);
+        continue;
+      }
+      doc.text(line, { align: "left" });
+    }
+    doc.end();
+  });
+}
+
+function writeSse(res, payload) {
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
 async function chatController(req, res) {
   console.log("[chat] Request received.");
-  const { message, practiceArea, country, state } = parseBody(req);
-  console.log("[chat] Parsed body:", { message, practiceArea, country, state });
+  const { message, mood, promptMode, witnessName, witnessTitle, interviewerRole, history, practiceArea, country, state } = parseBody(req);
+  console.log("[chat] Parsed body:", { message, mood, promptMode, practiceArea, country, state });
 
   if (typeof message !== "string" || !message.trim()) {
     return res.json({
@@ -162,13 +236,19 @@ async function chatController(req, res) {
       const result = await generateClaudeReply({
         apiKey,
         message: userMessage,
+        mood,
+        promptMode,
+        witnessName,
+        witnessTitle,
+        interviewerRole,
+        conversationHistory: history,
         practiceArea: area,
         country,
         state,
         caseContext: caseData.context,
         skippedFiles: caseData.skippedFiles,
       });
-      reply = result.reply;
+                  reply = result.reply;
       urgentTopic = result.urgentTopic;
       mode = result.mode || "live";
       modeReason = "";
@@ -256,14 +336,31 @@ async function chatController(req, res) {
 }
 
 async function chatStreamController(req, res) {
-  console.log("[chat-stream] Controller hit. Mood:", req.body?.mood);
-  const { message, mood } = parseBody(req);
+  const { message, mood, promptMode, witnessName, witnessTitle, interviewerRole, history } = parseBody(req);
+  console.log("[chat-stream] Controller hit.", { mood, promptMode });
+  if (!message) {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+    writeSse(res, { error: "Please provide a legal question or message so I can assist you." });
+    writeSse(res, { done: true });
+    res.write("data: [DONE]\n\n");
+    return res.end();
+  }
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey) {
-    console.warn("[chat-stream] No API key, sending fallback JSON.");
+    console.warn("[chat-stream] No API key, sending fallback SSE.");
     const reply = buildFallbackReply({ practiceArea: "General", message });
-    return res.json({ reply, mode: "fallback" });
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+    writeSse(res, { text: reply, mode: "fallback" });
+    writeSse(res, { done: true });
+    res.write("data: [DONE]\n\n");
+    return res.end();
   }
 
   const uploadedFiles = req.files || [];
@@ -281,14 +378,19 @@ async function chatStreamController(req, res) {
       apiKey,
       message,
       mood,
+      promptMode,
+      witnessName,
+      witnessTitle,
+      interviewerRole,
+      conversationHistory: history,
       caseContext: caseData.context,
       skippedFiles: caseData.skippedFiles,
     });
 
     let chunkCount = 0;
-    for await (const chunk of stream) {
+            for await (const chunk of stream) {
       chunkCount++;
-      res.write(`data: ${JSON.stringify({ text: chunk })}\n\n`);
+      writeSse(res, { text: chunk });
     }
 
     console.log(`[chat-stream] Stream finished. Total chunks sent: ${chunkCount}`);
@@ -301,5 +403,48 @@ async function chatStreamController(req, res) {
   }
 }
 
-module.exports = { chatController, chatStreamController };
+async function endSessionReportController(req, res) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const body = req.body || {};
+  const topic = normalizeString(body.topic || "Cross-examination practice");
+  const transcript = normalizeString(body.transcript);
+  const sideCounsel = normalizeString(body.sideCounsel || "Not stated");
+  const difficulty = normalizeString(body.difficulty || "Not stated");
+  const witnessTitle = normalizeString(body.witnessTitle || "");
+
+  if (!transcript) {
+    return res.status(400).json({ error: "Transcript is required." });
+  }
+  if (!apiKey) {
+    return res.status(503).json({ error: "ANTHROPIC_API_KEY is missing on server." });
+  }
+
+  try {
+    const result = await generateEndSessionReport({
+      apiKey,
+      topic,
+      transcript,
+      sideCounsel,
+      difficulty,
+      witnessTitle,
+    });
+    const safeTopic = topic.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase() || "session";
+    const pdfText = markdownToPlainText(result.report);
+    const pdfBuffer = await createPdfBufferFromText({
+      title: `End-of-session report - ${topic}`,
+      text: pdfText,
+    });
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="end-of-session-report-${safeTopic}.pdf"`);
+    return res.status(200).send(pdfBuffer);
+  } catch (err) {
+    console.error("[end-session-report] failed:", err);
+    return res.status(500).json({
+      error: err?.message || "Failed to generate end-of-session report.",
+    });
+  }
+}
+
+module.exports = { chatController, chatStreamController, endSessionReportController };
 
