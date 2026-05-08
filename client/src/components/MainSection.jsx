@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ChatBox from "./ChatBox.jsx";
 
 import AvatarPanel from "./AvatarPanel.jsx";
@@ -96,6 +96,7 @@ export default function MainSection() {
   const [liveEnabled, setLiveEnabled] = useState(false);
 
   const [isAvatarLoading, setIsAvatarLoading] = useState(false);
+  const [isStreamReady, setIsStreamReady] = useState(false);
   const [avatarError, setAvatarError] = useState("");
 
   const [messages, setMessages] = useState([]);
@@ -105,13 +106,14 @@ export default function MainSection() {
   const [claudeMode, setClaudeMode] = useState("fallback"); // unknown | live | fallback
   const [lastClaudeError, setLastClaudeError] = useState("");
   const [mood, setMood] = useState("Supportive"); // Supportive | Challenging | Hostile
-    const [promptMode, setPromptMode] = useState("default"); // default | medico_cross_exam
+  const [promptMode, setPromptMode] = useState("default"); // default | medico_cross_exam
   const [showCaseSetup, setShowCaseSetup] = useState(false);
   const [caseReady, setCaseReady] = useState(false);
   const [caseFiles, setCaseFiles] = useState([]);
   const [caseUserName, setCaseUserName] = useState("");
   const [caseUserTitle, setCaseUserTitle] = useState("Client");
   const [caseInterviewerRole, setCaseInterviewerRole] = useState("Lead Counsel");
+  const isHandshakeTriggered = useRef(false);
 
   const apiBaseUrl = getApiBaseUrl();
   console.log("[MainSection] Initialized. API Base URL:", apiBaseUrl);
@@ -182,8 +184,10 @@ export default function MainSection() {
               internal: !!messageText?.internal,
             };
       const question = normalized.text.trim();
-      if (!question) {
-        console.warn("[chat] Empty question, skipping.");
+      const hasFiles = normalized.files && normalized.files.length > 0;
+      
+      if (!question && !hasFiles) {
+        console.warn("[chat] Empty question and no files, skipping.");
         return;
       }
 
@@ -211,7 +215,8 @@ export default function MainSection() {
       activeReaderRef.current = null;
 
       // Keep filler only for default mode; barrister simulator should stay in-role only.
-      if (promptMode === "default" && sessionId && liveSessionRef.current) {
+      // Also skip for internal messages like the handshake greeting.
+      if (promptMode === "default" && sessionId && liveSessionRef.current && !normalized.internal) {
         const fillers = {
           Supportive: [
             "I understand. Let me look into that for you right away...",
@@ -468,6 +473,7 @@ export default function MainSection() {
       if (!transcript) return;
 
       setIsReportGenerating(true);
+      console.log("[report] Starting report generation for topic:", inferTopicFromMessages(snapshotMessages));
       try {
         const res = await fetch(`${apiBaseUrl}/api/end-session-report`, {
           method: "POST",
@@ -475,7 +481,7 @@ export default function MainSection() {
           body: JSON.stringify({
             topic: inferTopicFromMessages(snapshotMessages),
             transcript,
-                        difficulty: mood,
+            difficulty: mood,
             sideCounsel: "Lead Counsel",
           }),
         });
@@ -519,7 +525,6 @@ export default function MainSection() {
       const sessionToken = data?.sessionToken || null;
       const hasLiveSession = !!sessionToken && !!nextSessionId;
       setSessionId(hasLiveSession ? nextSessionId : null);
-      setLiveEnabled(hasLiveSession);
       setStatus("ready");
 
       if (!sessionToken || !nextSessionId) {
@@ -545,6 +550,7 @@ export default function MainSection() {
 
       liveSession.on(SessionEvent.SESSION_STREAM_READY, () => {
         console.log("[avatar] Stream ready.");
+        setIsStreamReady(true);
         if (videoRef.current) liveSession.attach(videoRef.current);
       });
       liveSession.on(AgentEventsEnum.AVATAR_SPEAK_STARTED, () => {
@@ -566,11 +572,14 @@ export default function MainSection() {
 
       await liveSession.start();
       liveSessionRef.current = liveSession;
+      setLiveEnabled(true);
+      console.log("[avatar] Session started and enabled.");
     } catch (err) {
       console.warn("[avatar] start session failed:", err?.message || err);
       setAvatarError(parseAvatarStartError(err));
       setSessionId(null);
       setLiveEnabled(false);
+      setIsStreamReady(false);
       liveSessionRef.current = null;
       setStatus("ready");
     } finally {
@@ -590,15 +599,24 @@ export default function MainSection() {
     speakTimeoutRef.current = null;
     setSessionId(null);
     setLiveEnabled(false);
+    setIsStreamReady(false);
     setStatus("ready");
     await generateEndSessionReport(snapshotMessages);
   }, [generateEndSessionReport, messages]);
 
   // Auto-start session on mount
   React.useEffect(() => {
-    console.log("[MainSection] Auto-starting avatar session...");
     startSession();
   }, [startSession]);
+
+  // Handshake greeting - wait until avatar is ready (stream is visible)
+  useEffect(() => {
+    if (promptMode === "default" && messages.length === 0 && !isHandshakeTriggered.current && isStreamReady) {
+      isHandshakeTriggered.current = true;
+      console.log("[handshake] Avatar is fully enabled. Triggering General Advisory greeting...");
+      handleAsk({ text: "GET_HANDSHAKE", internal: true });
+    }
+  }, [promptMode, messages.length, isStreamReady, handleAsk]);
 
   // Suppress known harmless SDK cleanup rejections when session start fails.
   React.useEffect(() => {
@@ -611,7 +629,7 @@ export default function MainSection() {
     return () => window.removeEventListener("unhandledrejection", onUnhandledRejection);
   }, []);
 
-    React.useEffect(() => {
+  React.useEffect(() => {
     if (promptMode !== "medico_cross_exam") return;
     if (!caseReady) return;
     if (messages.length > 0) return;
@@ -642,6 +660,7 @@ export default function MainSection() {
     handleAsk,
   ]);
 
+  // Cleanup active reader on unmount
   React.useEffect(() => {
     return () => {
       try {
@@ -651,6 +670,7 @@ export default function MainSection() {
       }
     };
   }, []);
+
 
     const submitCaseSetup = useCallback(() => {
     const cleanName = String(caseUserName || "").trim();
@@ -690,7 +710,8 @@ export default function MainSection() {
               Claude Active
             </div>
 
-                        <div className="moodSelector" style={{ marginBottom: 16, display: "flex", gap: 8 }}>
+                        {/* Hide mode selection for now as requested */}
+                        <div className="moodSelector" style={{ marginBottom: 16, display: "none", gap: 8 }}>
               {[
                 { id: "default", label: "General Advisory" },
                 { id: "medico_cross_exam", label: "Advanced Litigation" },
@@ -715,6 +736,8 @@ export default function MainSection() {
               ))}
             </div>
 
+            {/* Remove difficulty selection buttons; AI will ask instead */}
+            {/* 
             <div className="moodSelector" style={{ marginBottom: 16, display: "flex", gap: 8 }}>
               {["Supportive", "Challenging", "Hostile"].map((m) => (
                 <button
@@ -736,6 +759,7 @@ export default function MainSection() {
                 </button>
               ))}
             </div>
+            */}
 
             <div className="glass" style={{ padding: 16 }}>
               <ChatBox

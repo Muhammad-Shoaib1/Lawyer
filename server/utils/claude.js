@@ -118,24 +118,23 @@ function buildSystemPrompt(mood = "Supportive") {
   return `You are an AI legal intake assistant for a professional law firm.
 ${moodInstructions}
 
+1. Opening Handshake (MANDATORY)
+If the user says "GET_HANDSHAKE", your first output must be exactly:
+"Good morning, doctor. I am here to assist you with your legal matter. Before we begin, would you like our session to be Supportive, Challenging, or Hostile?"
+Wait for the user's response to this question before providing any legal guidance. Once they choose, adjust your tone accordingly for the rest of the session.
+
+2. General Guidance
 Provide general information grounded in the law of England and Wales. You cover all legal areas including Family Law, child custody, commercial, criminal, and tort.
-
 Never claim to be a practicing solicitor or barrister in a real-world legal representation capacity.
-
 Use professional, calm, concise tone.
-
 Keep answers brief by default (about 90-140 words) unless the user explicitly asks for detail.
 Default to 1-3 short sentences unless the user explicitly asks for a longer answer.
 Prefer <=30 words for quick interactions.
-
 Always mention: "This is general information based on England and Wales law and is not formal legal advice."
-
 When possible, cite 1-3 concrete UK legal references (Acts, SI regulations, CPR provisions, official guidance).
 
 IMPORTANT: The user may refer to "attached files". Read the provided text excerpts and address the user's questions based on them.
-
 If the user asks about non-UK jurisdictions, state that your guidance is limited to England and Wales.
-
 Urgent topics (arrest, deadlines, immigration risk, child custody emergency, domestic violence, eviction): Recommend consultation with a qualified legal professional immediately.`;
 }
 
@@ -210,7 +209,8 @@ async function generateClaudeReply({
     sections.push(`Case files context (user-uploaded excerpts):\n${caseContext}`);
   }
   if (skippedFiles.length > 0) {
-    sections.push(`System Note: The user tried to upload the following files, but they could not be read because they are in an unsupported format: ${skippedFiles.join(", ")}. Please inform the user that you can only read text-based files (like .txt, .csv, .md) and ask them to copy-paste the text or upload a supported format.`);
+    const skipList = skippedFiles.join(", ");
+    sections.push(`System Note: The following files were skipped or could not be read: ${skipList}. If a PDF failed to parse, it may be a scanned image (OCR is not supported) or encrypted. Please inform the user and suggest they copy-paste the text or provide a text-based version.`);
   }
   if (witnessName) sections.push(`Witness preferred name: ${witnessName}`);
   if (witnessTitle) sections.push(`Witness title: ${witnessTitle}`);
@@ -294,7 +294,8 @@ async function* generateClaudeReplyStream({
     sections.push(`Case files context (user-uploaded excerpts):\n${caseContext}`);
   }
   if (skippedFiles.length > 0) {
-    sections.push(`System Note: Unsupported files were skipped: ${skippedFiles.join(", ")}.`);
+    const skipList = skippedFiles.join(", ");
+    sections.push(`System Note: The following files were skipped or could not be read: ${skipList}. If a PDF failed to parse, it may be a scanned image (OCR is not supported) or encrypted. Please inform the user and suggest they copy-paste the text or provide a text-based version.`);
   }
   if (witnessName) sections.push(`Witness preferred name: ${witnessName}`);
   if (witnessTitle) sections.push(`Witness title: ${witnessTitle}`);

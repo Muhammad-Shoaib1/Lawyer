@@ -1,6 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import Tesseract from "tesseract.js";
+import * as pdfjsLib from "pdfjs-dist/build/pdf";
+
+// Use CDN worker for maximum compatibility if local worker fails to bundle correctly in this environment
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
 
 
@@ -28,6 +33,8 @@ export default function ChatBox({
   const [caseFiles, setCaseFiles] = useState([]);
   const [isSpeechSupported, setIsSpeechSupported] = useState(true);
   const [isRecording, setIsRecording] = useState(false);
+  const [isOcrProcessing, setIsOcrProcessing] = useState(false);
+  const [ocrStatus, setOcrStatus] = useState("");
   const isCrossExamMode = promptMode === "medico_cross_exam" && crossExamActive;
   const recognitionRef = useRef(null);
   const lastInterimRef = useRef("");
@@ -195,10 +202,58 @@ export default function ChatBox({
 
   const submit = () => {
     const t = draft.trim();
-    if (!t) return;
+    if (!t && caseFiles.length === 0) return;
     setDraft("");
     onSubmitMessage?.({ text: t, files: caseFiles });
     setCaseFiles([]);
+  };
+
+  const performOcrOnPdf = async (file) => {
+    setIsOcrProcessing(true);
+    setOcrStatus("Loading OCR Engine...");
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+      const pdf = await loadingTask.promise;
+      let fullOcrText = "";
+      
+      const numPages = Math.min(pdf.numPages, 5); 
+      for (let i = 1; i <= numPages; i++) {
+        setOcrStatus(`OCR: Reading page ${i} of ${numPages}...`);
+        const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale: 2.0 }); 
+        
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d");
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+        
+        await page.render({ canvasContext: context, viewport }).promise;
+        
+        const { data: { text } } = await Tesseract.recognize(canvas, "eng");
+        fullOcrText += `--- Page ${i} ---\n${text}\n\n`;
+      }
+      
+      if (fullOcrText.trim()) {
+        const ocrFile = new File(
+          [fullOcrText],
+          `extracted_text_${file.name.replace(".pdf", ".txt")}`,
+          { type: "text/plain" }
+        );
+        setCaseFiles((prev) => [...prev, ocrFile]);
+        setOcrStatus("Text Extracted!");
+      } else {
+        setOcrStatus("No text found.");
+      }
+    } catch (err) {
+      console.error("[ocr] Error:", err);
+      setOcrStatus("OCR Error (Likely Scanned)");
+    } finally {
+      setTimeout(() => {
+        setIsOcrProcessing(false);
+        setOcrStatus("");
+      }, 3000);
+    }
   };
 
   return (
@@ -245,12 +300,25 @@ export default function ChatBox({
           type="file"
           multiple
           disabled={isThinking}
-          onChange={(e) => {
+          onChange={async (e) => {
             const next = Array.from(e.target.files || []);
-            setCaseFiles(next.slice(0, 5));
+            const valid = next.slice(0, 5);
+            setCaseFiles(valid);
+            
+            // Check for PDFs and offer/start OCR
+            for (const file of valid) {
+              if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+                await performOcrOnPdf(file);
+              }
+            }
           }}
           aria-label="Upload case files"
         />
+        {isOcrProcessing && (
+          <div className="statusText" style={{ color: "var(--gold)", fontWeight: "bold" }}>
+             {ocrStatus}
+          </div>
+        )}
         <div className="statusText">
           Upload up to 5 files (.txt, .pdf, .docx)
         </div>
